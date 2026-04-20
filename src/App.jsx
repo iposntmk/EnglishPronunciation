@@ -683,7 +683,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
             })
             setWhisperStatus('transcribing') // ensure status after load
             diagRef.current = diagnoseFromSpeech(word, transcript, phonemes)
-            setWhisperStatus('done')
+            setResult(diagRef.current)
+            setPhase('result')
           } catch (err) {
             setWhisperStatus('failed')
             setErrorMsg(`Whisper lỗi: ${err.message}`)
