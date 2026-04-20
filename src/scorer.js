@@ -218,11 +218,26 @@ export async function scoreWord(audioBlob, phonemes) {
     return scoreWordOpenAI(audioBlob, phonemes, apiKey)
   }
 
+  if (provider === 'groq') {
+    const apiKey = localStorage.getItem('groqApiKey') || ''
+    if (!apiKey) throw new Error('Chưa cấu hình Groq API key. Vào Cài đặt để thêm.')
+    const { scoreWordGroq } = await import('./api-scorers.js')
+    return scoreWordGroq(audioBlob, phonemes, apiKey)
+  }
+
   if (provider === 'google') {
     const apiKey = localStorage.getItem('googleApiKey') || ''
     if (!apiKey) throw new Error('Chưa cấu hình Google Cloud API key. Vào Cài đặt để thêm.')
     const { scoreWordGoogleCloud } = await import('./api-scorers.js')
     return scoreWordGoogleCloud(audioBlob, phonemes, apiKey)
+  }
+
+  if (provider === 'azure') {
+    const subscriptionKey = localStorage.getItem('azureSubscriptionKey') || ''
+    const region = localStorage.getItem('azureRegion') || ''
+    if (!subscriptionKey || !region) throw new Error('Chưa cấu hình Azure. Vào Cài đặt để thêm.')
+    const { scoreWordAzure } = await import('./api-scorers.js')
+    return scoreWordAzure(audioBlob, phonemes, subscriptionKey, region)
   }
 
   return scoreWordOffline(audioBlob, phonemes)

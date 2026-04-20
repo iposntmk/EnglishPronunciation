@@ -1000,16 +1000,71 @@ function DictionaryScreen({ onBack }) {
 
 // ─── SETTINGS SCREEN ──────────────────────────────────────────────────────
 
+const PROVIDERS = [
+  {
+    id: 'offline',
+    label: 'Offline (Transformers.js)',
+    badge: null,
+    desc: 'Chạy ngay trên trình duyệt, không cần internet. Tải model ~40MB lần đầu.',
+  },
+  {
+    id: 'groq',
+    label: 'Groq Whisper',
+    badge: 'MIỄN PHÍ',
+    desc: 'Whisper large-v3 qua Groq API — miễn phí, không giới hạn thực tế, rất nhanh.',
+  },
+  {
+    id: 'azure',
+    label: 'Azure Pronunciation Assessment',
+    badge: 'TỐT NHẤT',
+    desc: 'Chấm điểm từng âm vị chính xác. Miễn phí 5 giờ/tháng.',
+  },
+  {
+    id: 'google',
+    label: 'Google Cloud Speech',
+    badge: 'FREE 60ph',
+    desc: 'Speech-to-Text V1 — miễn phí 60 phút/tháng, cần API key.',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI Whisper',
+    badge: null,
+    desc: 'Whisper-1 qua OpenAI API, tính phí theo phút.',
+  },
+]
+
+function KeyField({ label, value, onChange, placeholder, hint }) {
+  return (
+    <div className="px-4 mb-4">
+      <div className="text-white/60 text-xs uppercase tracking-wider mb-2 font-semibold">{label}</div>
+      <input
+        type="password"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
+      />
+      {hint && <p className="text-white/30 text-xs mt-1.5">{hint}</p>}
+    </div>
+  )
+}
+
 function SettingsScreen() {
   const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'offline')
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openaiApiKey') || '')
+  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groqApiKey') || '')
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('googleApiKey') || '')
+  const [azureKey, setAzureKey] = useState(() => localStorage.getItem('azureSubscriptionKey') || '')
+  const [azureRegion, setAzureRegion] = useState(() => localStorage.getItem('azureRegion') || '')
   const [saved, setSaved] = useState(false)
 
   const save = () => {
     localStorage.setItem('pronunciationProvider', provider)
     localStorage.setItem('openaiApiKey', openaiKey.trim())
+    localStorage.setItem('groqApiKey', groqKey.trim())
     localStorage.setItem('googleApiKey', googleKey.trim())
+    localStorage.setItem('azureSubscriptionKey', azureKey.trim())
+    localStorage.setItem('azureRegion', azureRegion.trim())
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -1021,23 +1076,23 @@ function SettingsScreen() {
         <p className="text-white/40 text-sm">Chọn engine chấm điểm phát âm</p>
       </div>
 
-      {/* Provider selection */}
       <div className="px-4 mb-6">
         <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Engine chấm điểm</div>
         <div className="flex flex-col gap-2">
-          {[
-            { id: 'offline', label: 'Offline (Transformers.js)', desc: 'Chạy ngay trên trình duyệt, không cần internet. Tải model ~40MB lần đầu.' },
-            { id: 'openai', label: 'OpenAI Whisper API', desc: 'Chính xác cao hơn, cần API key và kết nối mạng.' },
-            { id: 'google', label: 'Google Cloud Speech API', desc: 'Chất lượng cao, cần API key và kết nối mạng.' },
-          ].map(opt => (
+          {PROVIDERS.map(opt => (
             <button key={opt.id} onClick={() => setProvider(opt.id)}
               className={`text-left rounded-2xl p-4 border transition-all ${provider === opt.id ? 'bg-blue-600/20 border-blue-500/50' : 'bg-white/5 border-white/10 hover:bg-white/8'}`}>
               <div className="flex items-center gap-3">
                 <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${provider === opt.id ? 'border-blue-400' : 'border-white/30'}`}>
                   {provider === opt.id && <div className="w-2 h-2 bg-blue-400 rounded-full" />}
                 </div>
-                <div>
-                  <div className={`font-semibold text-sm ${provider === opt.id ? 'text-blue-300' : 'text-white/80'}`}>{opt.label}</div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-semibold text-sm ${provider === opt.id ? 'text-blue-300' : 'text-white/80'}`}>{opt.label}</span>
+                    {opt.badge && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">{opt.badge}</span>
+                    )}
+                  </div>
                   <div className="text-white/40 text-xs mt-0.5">{opt.desc}</div>
                 </div>
               </div>
@@ -1046,33 +1101,53 @@ function SettingsScreen() {
         </div>
       </div>
 
-      {/* API key inputs */}
-      {provider === 'openai' && (
-        <div className="px-4 mb-6">
-          <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">OpenAI API Key</div>
-          <input
-            type="password"
-            value={openaiKey}
-            onChange={e => setOpenaiKey(e.target.value)}
-            placeholder="sk-..."
-            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
+      {provider === 'groq' && (
+        <KeyField
+          label="Groq API Key"
+          value={groqKey}
+          onChange={setGroqKey}
+          placeholder="gsk_..."
+          hint="Đăng ký miễn phí tại console.groq.com → API Keys"
+        />
+      )}
+
+      {provider === 'azure' && (
+        <>
+          <KeyField
+            label="Azure Subscription Key"
+            value={azureKey}
+            onChange={setAzureKey}
+            placeholder="32 ký tự hex..."
+            hint="Azure Portal → Cognitive Services → Keys and Endpoint"
           />
-          <p className="text-white/30 text-xs mt-2">Lấy key tại platform.openai.com → API keys</p>
-        </div>
+          <KeyField
+            label="Azure Region"
+            value={azureRegion}
+            onChange={setAzureRegion}
+            placeholder="eastus / southeastasia / ..."
+            hint="Ví dụ: eastus, westus2, southeastasia"
+          />
+        </>
       )}
 
       {provider === 'google' && (
-        <div className="px-4 mb-6">
-          <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Google Cloud API Key</div>
-          <input
-            type="password"
-            value={googleKey}
-            onChange={e => setGoogleKey(e.target.value)}
-            placeholder="AIza..."
-            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
-          />
-          <p className="text-white/30 text-xs mt-2">Lấy key tại console.cloud.google.com → APIs &amp; Services → Credentials</p>
-        </div>
+        <KeyField
+          label="Google Cloud API Key"
+          value={googleKey}
+          onChange={setGoogleKey}
+          placeholder="AIza..."
+          hint="console.cloud.google.com → APIs & Services → Credentials"
+        />
+      )}
+
+      {provider === 'openai' && (
+        <KeyField
+          label="OpenAI API Key"
+          value={openaiKey}
+          onChange={setOpenaiKey}
+          placeholder="sk-..."
+          hint="platform.openai.com → API keys"
+        />
       )}
 
       <div className="px-4">
