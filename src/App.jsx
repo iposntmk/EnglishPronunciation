@@ -2,35 +2,29 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
 
-// ─── WHISPER (chạy offline trong browser, không cần internet) ─────────────
-let _whisperPipe = null
-let _whisperPromise = null
+// ─── PRONUNCIATION SCORING (Python backend: faster-whisper + GoP) ─────────
 
-function loadWhisper(onProgress) {
-  if (_whisperPipe) return Promise.resolve(_whisperPipe)
-  if (!_whisperPromise) {
-    _whisperPromise = import('@xenova/transformers')
-      .then(({ pipeline }) => pipeline(
-        'automatic-speech-recognition',
-        'Xenova/whisper-tiny.en',
-        { progress_callback: onProgress }
-      ))
-      .then(pipe => { _whisperPipe = pipe; return pipe })
-      .catch(err => { _whisperPromise = null; throw err })
+async function scorePronunciation(blob, word, targetIpaList) {
+  const form = new FormData()
+  form.append('audio', new File([blob], 'rec.webm', { type: blob.type }))
+  form.append('word', word)
+  form.append('target_ipa', JSON.stringify(targetIpaList))
+  const res = await fetch('/api/score', { method: 'POST', body: form })
+  if (!res.ok) {
+    const msg = await res.text().catch(() => `HTTP ${res.status}`)
+    throw new Error(msg)
   }
-  return _whisperPromise
+  return res.json()
 }
 
-async function transcribeBlob(blob, onProgress) {
-  const pipe = await loadWhisper(onProgress)
-  // Pass blob URL — transformers.js fetches + decodes + resamples internally
-  const url = URL.createObjectURL(blob)
-  try {
-    const out = await pipe(url)
-    return out.text.toLowerCase().replace(/[^a-z\s']/g, '').trim()
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+// Merge backend scores with local phoneme metadata (tip, isHard, text…)
+function buildResult(apiData, targetPhonemes) {
+  const phonemes = targetPhonemes.map((p, i) => {
+    const r = apiData.phonemes?.[i] ?? { score: 0, note: null }
+    return { ...p, score: r.score, note: r.note }
+  })
+  const overall = apiData.overall ?? Math.round(phonemes.reduce((s, p) => s + p.score, 0) / phonemes.length)
+  return { phonemes, overall, spokenWord: apiData.spokenWord ?? null }
 }
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
@@ -626,30 +620,18 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  // whisper: idle | loading | transcribing | done | failed
-  const [whisperStatus, setWhisperStatus] = useState('idle')
-  const [modelProgress, setModelProgress] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
-  const diagRef = useRef(null)
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  // Bắt đầu load model Whisper ngầm khi component mount
-  useEffect(() => {
-    loadWhisper(() => {}).catch(() => {})
-  }, [])
-
   const startRecording = useCallback(() => {
     setRecordingUrl(null)
     setErrorMsg(null)
-    setWhisperStatus('idle')
-    setModelProgress(0)
-    diagRef.current = null
 
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
@@ -671,23 +653,12 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           setRecordingUrl(URL.createObjectURL(blob))
           setPhase('recorded')
 
-          // Transcribe bằng Whisper
-          setWhisperStatus(_whisperPipe ? 'transcribing' : 'loading')
           try {
-            const transcript = await transcribeBlob(blob, (p) => {
-              if (p.status === 'progress' && p.progress != null) {
-                setModelProgress(Math.round(p.progress))
-                setWhisperStatus('loading')
-              }
-              if (p.status === 'ready') setWhisperStatus('transcribing')
-            })
-            setWhisperStatus('transcribing') // ensure status after load
-            diagRef.current = diagnoseFromSpeech(word, transcript, phonemes)
-            setResult(diagRef.current)
+            const data = await scorePronunciation(blob, word, phonemes.map(p => p.ipa))
+            setResult(buildResult(data, phonemes))
             setPhase('result')
           } catch (err) {
-            setWhisperStatus('failed')
-            setErrorMsg(`Whisper lỗi: ${err.message}`)
+            setErrorMsg(`Lỗi chấm điểm: ${err.message}`)
           }
         }
 
@@ -710,19 +681,12 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
-  const showResult = () => {
-    setResult(diagRef.current)
-    setPhase('result')
-  }
-
   const reset = () => {
     clearTimeout(timeoutRef.current)
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
-    diagRef.current = null
     setPhase('ready'); setResult(null); setSelectedIdx(null)
     setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null)
-    setWhisperStatus('idle'); setModelProgress(0)
   }
 
   const playbackRecording = () => {
@@ -736,15 +700,6 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   }
 
   const sel = selectedIdx !== null && result ? result.phonemes[selectedIdx] : null
-
-  // Label cho nút Xem kết quả
-  const scoreButtonLabel = () => {
-    if (whisperStatus === 'done') return 'Xem kết quả'
-    if (whisperStatus === 'failed') return 'Nhận diện thất bại'
-    if (whisperStatus === 'loading') return `Tải model... ${modelProgress}%`
-    if (whisperStatus === 'transcribing') return 'Đang nhận diện...'
-    return 'Đang xử lý...'
-  }
 
   return (
     <div className="flex flex-col h-full">
@@ -796,7 +751,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         <div className="mx-4 mb-4 rounded-2xl bg-white/5 border border-white/10 p-4">
           <div className="flex items-center justify-between mb-2">
             <span className="text-white/60 text-sm">Kết quả:</span>
-            <span className="text-white/40 text-sm">Nhận diện: "{result.spokenWord || '—'}"</span>
+            <span className="text-white/40 text-sm">Từ: "{result.spokenWord || '—'}"</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex-1 h-3 bg-white/10 rounded-full overflow-hidden">
@@ -836,7 +791,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </button>
         )}
 
-        {/* Bước 3: recorded — nghe lại + chờ Whisper */}
+        {/* Bước 3: recorded — nghe lại + chờ backend chấm điểm */}
         {phase === 'recorded' && (
           <>
             {recordingUrl && (
@@ -846,16 +801,12 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
                 {isPlayingBack ? 'Dừng' : 'Nghe lại bản ghi'}
               </button>
             )}
-            {/* Progress bar khi đang tải model */}
-            {whisperStatus === 'loading' && (
-              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-400 rounded-full transition-all duration-300" style={{ width: `${modelProgress}%` }} />
+            {!errorMsg && (
+              <div className="w-full rounded-2xl py-3 bg-white/5 border border-white/10 text-white/50 flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+                Đang chấm điểm...
               </div>
             )}
-            <button onClick={showResult} disabled={whisperStatus !== 'done'}
-              className={`w-full rounded-2xl py-4 flex items-center justify-center gap-2 text-base font-semibold transition-all ${whisperStatus === 'done' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white active:scale-95' : 'bg-white/5 border border-white/10 text-white/40 cursor-not-allowed'}`}>
-              {scoreButtonLabel()}
-            </button>
             <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
               <RotateCcw size={18} />
               Thử lại
