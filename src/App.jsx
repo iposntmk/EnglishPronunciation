@@ -320,6 +320,58 @@ const WORD_IPA_RAW = {
   zebra:[['ze','ziː'],['bra','brə']],
   better:[['bet','bɛt'],['ter','ɾər']],
   muddy:[['mud','mʌd'],['dy','i']],
+  // words in SOUNDS data not previously covered
+  bee:[['b','b'],['ee','iː']],
+  feet:[['f','f'],['ee','iː'],['t','t']],
+  fish:[['f','f'],['i','ɪ'],['sh','ʃ']],
+  sit:[['s','s'],['i','ɪ'],['t','t']],
+  bit:[['b','b'],['i','ɪ'],['t','t']],
+  quick:[['qu','kw'],['i','ɪ'],['ck','k']],
+  egg:[['e','ɛ'],['gg','g']],
+  bag:[['b','b'],['a','æ'],['g','g']],
+  black:[['bl','bl'],['a','æ'],['ck','k']],
+  bus:[['b','b'],['u','ʌ'],['s','s']],
+  duck:[['d','d'],['u','ʌ'],['ck','k']],
+  banana:[['ba','bə'],['na','næ'],['na','nə']],
+  blue:[['bl','bl'],['ue','uː']],
+  ball:[['b','b'],['all','ɔːl']],
+  hot:[['h','h'],['o','ɑː'],['t','t']],
+  clock:[['cl','kl'],['o','ɑː'],['ck','k']],
+  dollar:[['d','d'],['o','ɑː'],['ll','l'],['ar','ər']],
+  go:[['g','g'],['o','oʊ']],
+  bike:[['b','b'],['i','aɪ'],['ke','k']],
+  boy:[['b','b'],['oy','ɔɪ']],
+  oil:[['oi','ɔɪ'],['l','l']],
+  car:[['c','k'],['ar','ɑːr']],
+  door:[['d','d'],['oor','ɔːr']],
+  pretty:[['pr','pr'],['ett','ɪt'],['y','i']],
+  plant:[['pl','pl'],['a','æ'],['nt','nt']],
+  baby:[['ba','beɪ'],['by','bi']],
+  big:[['b','b'],['i','ɪ'],['g','g']],
+  tiny:[['ti','taɪ'],['ny','ni']],
+  turtle:[['tur','tɜː'],['tle','təl']],
+  dinner:[['din','dɪn'],['ner','nər']],
+  date:[['d','d'],['a','eɪ'],['te','t']],
+  deep:[['d','d'],['ee','iː'],['p','p']],
+  candy:[['can','kæn'],['dy','di']],
+  cane:[['c','k'],['a','eɪ'],['ne','n']],
+  kind:[['k','k'],['i','aɪ'],['nd','nd']],
+  giggly:[['gig','gɪg'],['gly','li']],
+  meek:[['m','m'],['ee','iː'],['k','k']],
+  mouse:[['m','m'],['ou','aʊ'],['se','s']],
+  new:[['n','n'],['ew','juː']],
+  necklace:[['neck','nɛk'],['lace','lɪs']],
+  furry:[['fur','fɜː'],['ry','ri']],
+  nose:[['n','n'],['o','oʊ'],['se','z']],
+  shiny:[['sh','ʃ'],['i','aɪ'],['ny','ni']],
+  shoes:[['sh','ʃ'],['oes','uːz']],
+  prickly:[['pr','pr'],['i','ɪ'],['ck','k'],['ly','li']],
+  branch:[['br','br'],['a','æ'],['n','n'],['ch','tʃ']],
+  whale:[['wh','w'],['a','eɪ'],['le','l']],
+  cheddar:[['ch','tʃ'],['e','ɛ'],['dd','d'],['ar','ər']],
+  cheese:[['ch','tʃ'],['ee','iː'],['se','z']],
+  church:[['ch','tʃ'],['ur','ɜː'],['ch','tʃ']],
+  gentle:[['gen','dʒɛn'],['tle','təl']],
   city_tap:[['ci','sɪ'],['ty','ɾi']],
   butter:[['but','bʌt'],['ter','ɾər']],
   before:[['be','bɪ'],['fore','fɔːr']],
@@ -533,10 +585,20 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
+const SR_ERRORS = {
+  'not-allowed':   'Chưa cấp quyền microphone — vào Settings trình duyệt và bật Microphone cho trang này.',
+  'network':       'Lỗi mạng — Speech Recognition cần kết nối internet (gửi audio lên Google). Kiểm tra WiFi.',
+  'audio-capture': 'Không tìm thấy microphone trên thiết bị.',
+  'no-speech':     'Không nghe thấy giọng nói. Nói to hơn và thử lại.',
+  'aborted':       null,
+  'service-not-allowed': 'Trình duyệt chặn microphone. Dùng Chrome và mở qua HTTPS.',
+}
+
 function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const phonemes = lookupWord(word)
   // phases: ready → listening → recorded → result
   const [phase, setPhase] = useState('ready')
+  const [errorMsg, setErrorMsg] = useState(null)
   const [result, setResult] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
@@ -554,48 +616,79 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) { alert('Trình duyệt không hỗ trợ nhận dạng giọng nói. Dùng Chrome.'); return }
+    if (!SR) { setErrorMsg('Trình duyệt không hỗ trợ. Dùng Chrome.'); return }
 
     setRecordingUrl(null)
+    setErrorMsg(null)
+    pendingDiagRef.current = null
+
     const rec = new SR()
     rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 5
     recogRef.current = rec
 
-    // MediaRecorder for playback capture
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      streamRef.current = stream
-      const mimeType = getSupportedMimeType()
-      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
-      mrRef.current = mr
-      const chunks = []
-      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-      mr.onstop = () => {
-        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
-        setRecordingUrl(URL.createObjectURL(blob))
-        stream.getTracks().forEach(t => t.stop())
-      }
-      mr.start(100)
-    }).catch(() => {})
+    const stopMR = () => { if (mrRef.current?.state === 'recording' || mrRef.current?.state === 'paused') mrRef.current.stop() }
+    const clearTO = () => clearTimeout(timeoutRef.current)
 
-    const stopMR = () => { if (mrRef.current?.state !== 'inactive') mrRef.current?.stop() }
-    const clearTO = () => { clearTimeout(timeoutRef.current) }
+    // MediaRecorder runs independently — mic permission failure won't block SR
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        streamRef.current = stream
+        const mimeType = getSupportedMimeType()
+        const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
+        mrRef.current = mr
+        const chunks = []
+        mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+        mr.onstop = () => {
+          if (chunks.length > 0) {
+            const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+            setRecordingUrl(URL.createObjectURL(blob))
+          }
+          stream.getTracks().forEach(t => t.stop())
+        }
+        mr.start(100)
+      })
+      .catch(err => {
+        // Recording playback unavailable — SR + scoring still work
+        const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
+        if (isDenied) setErrorMsg('Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.')
+        else setErrorMsg(`Không truy cập được microphone: ${err.message}`)
+      })
 
     rec.onstart = () => {
       setPhase('listening')
-      // Auto-stop after 5s if nothing detected
-      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 5000)
+      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 6000)
     }
+
     rec.onresult = e => {
-      clearTO(); stopMR()
+      clearTO()
       const alts = Array.from(e.results[0]).map(r => r.transcript)
       let best = alts[0], bestD = Infinity
       for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
       pendingDiagRef.current = diagnoseFromSpeech(word, best, phonemes)
-      setPhase('recorded')
+      // Don't change phase yet — wait for onend
     }
-    rec.onerror = e => { clearTO(); stopMR(); console.warn('SR error', e.error); setPhase('ready') }
-    rec.onend = () => { clearTO(); stopMR(); setPhase(prev => prev === 'listening' ? 'ready' : prev) }
-    // stopListening triggers onend which resets to ready; if user manually stopped with no speech, that's fine
+
+    rec.onerror = e => {
+      clearTO()
+      // network/no-speech errors are common — show message but let onend handle phase
+      const msg = SR_ERRORS[e.error]
+      if (msg !== null) setErrorMsg(msg || `Lỗi: ${e.error}`)
+    }
+
+    // onend ALWAYS fires after any stop/error — auto-score if we got a result
+    rec.onend = () => {
+      clearTO()
+      stopMR()
+      if (!pendingDiagRef.current) {
+        // SR ran but produced no transcript — don't fake 0%, show helpful error
+        setErrorMsg(prev => prev || 'Không nhận diện được giọng nói. Dùng Chrome qua HTTPS (https://...) và cấp quyền microphone.')
+        setPhase('ready')
+        return
+      }
+      setResult(pendingDiagRef.current)
+      setPhase(prev => prev === 'listening' ? 'result' : prev)
+    }
+
     rec.start()
   }, [word, phonemes])
 
@@ -615,7 +708,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     pendingDiagRef.current = null
-    setPhase('ready'); setResult(null); setSelectedIdx(null); setRecordingUrl(null); setIsPlayingBack(false)
+    setPhase('ready'); setResult(null); setSelectedIdx(null); setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null)
   }
 
   const playbackRecording = () => {
@@ -643,17 +736,19 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         <div className="flex flex-wrap justify-center gap-2 mt-4">
           {phonemes.map((p, idx) => {
             const r = result?.phonemes[idx]
-            const bg = r ? scoreBg(r.score) : 'bg-white/5 border-white/10'
-            const tc = r ? scoreColor(r.score) : 'text-white/60'
+            const recognised = result?.spokenWord !== null
+            const hasScore = r && recognised
+            const bg = hasScore ? scoreBg(r.score) : 'bg-white/5 border-white/10'
+            const tc = hasScore ? scoreColor(r.score) : 'text-white/60'
             return (
               <button key={idx}
-                onClick={() => r && setSelectedIdx(selectedIdx === idx ? null : idx)}
-                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all ${bg} ${r ? 'cursor-pointer active:scale-95' : 'cursor-default'} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
+                onClick={() => hasScore && setSelectedIdx(selectedIdx === idx ? null : idx)}
+                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all ${bg} ${hasScore ? 'cursor-pointer active:scale-95' : 'cursor-default'} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
               >
                 <span className="text-white font-semibold text-sm">{p.text}</span>
                 <span className="text-white/40 font-mono text-xs">/{p.ipa}/</span>
-                {r && <span className={`text-xs font-bold ${tc}`}>{r.score}%</span>}
-                {p.isHard && !r && <span className="text-yellow-400 text-xs">★</span>}
+                {hasScore && <span className={`text-xs font-bold ${tc}`}>{r.score}%</span>}
+                {p.isHard && !hasScore && <span className="text-yellow-400 text-xs">★</span>}
               </button>
             )
           })}
@@ -692,6 +787,14 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       {/* Controls */}
       <div className="px-4 pb-6 mt-auto flex flex-col gap-3">
 
+        {/* Error message */}
+        {errorMsg && (
+          <div className="bg-red-500/15 border border-red-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
+            <span className="text-red-400 text-lg mt-0.5">⚠️</span>
+            <p className="text-red-300 text-sm leading-relaxed">{errorMsg}</p>
+          </div>
+        )}
+
         {/* Phase: ready */}
         {phase === 'ready' && (
           <button onClick={startListening} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
@@ -706,26 +809,6 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
             <span className="font-semibold">Đang nghe... nhấn để dừng</span>
           </button>
-        )}
-
-        {/* Phase: recorded — playback first, then score */}
-        {phase === 'recorded' && (
-          <>
-            <div className="text-center text-white/50 text-sm">Đã ghi xong! Nghe lại trước khi chấm điểm</div>
-            {recordingUrl ? (
-              <button onClick={playbackRecording} className={`w-full rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-500/20 border-green-500/40 text-green-300'}`}>
-                {isPlayingBack ? <Square size={22} /> : <Play size={22} />}
-                {isPlayingBack ? 'Đang phát...' : 'Nghe lại giọng mình'}
-              </button>
-            ) : (
-              <div className="w-full rounded-2xl py-4 flex items-center justify-center text-white/30 border border-white/10">
-                <span className="text-sm">Đang xử lý âm thanh...</span>
-              </div>
-            )}
-            <button onClick={showScore} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
-              Chấm điểm →
-            </button>
-          </>
         )}
 
         {/* Phase: result */}
@@ -833,7 +916,7 @@ function SoundDetailScreen({ sound, onBack, onPracticeWord }) {
             <div className="text-5xl font-bold text-white">{sound.label}</div>
             <div className="text-white/70 font-mono text-xl">/{sound.ipa}/</div>
           </div>
-          <button onClick={() => speak(sound.ipa)} className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center active:scale-95 transition-transform">
+          <button onClick={() => speak(sound.words[0].word)} className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center active:scale-95 transition-transform">
             <Volume2 size={26} className="text-white" />
           </button>
         </div>
