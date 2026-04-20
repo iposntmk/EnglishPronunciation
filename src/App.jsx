@@ -580,8 +580,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
     rec.onstart = () => {
       setPhase('listening')
-      // Auto-stop after 6s if nothing detected
-      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 6000)
+      // Auto-stop after 5s if nothing detected
+      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 5000)
     }
     rec.onresult = e => {
       clearTO(); stopMR()
@@ -595,6 +595,11 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     rec.onend = () => { clearTO(); stopMR(); setPhase(prev => prev === 'listening' ? 'ready' : prev) }
     rec.start()
   }, [word, phonemes])
+
+  const stopListening = () => {
+    clearTimeout(timeoutRef.current)
+    try { recogRef.current?.stop() } catch (_) {}
+  }
 
   const reset = () => {
     clearTimeout(timeoutRef.current)
@@ -684,10 +689,10 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </button>
         )}
         {phase === 'listening' && (
-          <div className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400">
+          <button onClick={stopListening} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-            <span className="font-semibold">Đang nghe... nói "{word}"</span>
-          </div>
+            <span className="font-semibold">Đang nghe... nhấn để dừng</span>
+          </button>
         )}
         {result && (
           <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
@@ -700,7 +705,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
             <Volume2 size={18} />
             Nghe mẫu
           </button>
-          {recordingUrl && (
+          {phase === 'result' && recordingUrl && (
             <button onClick={playbackRecording} className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
               {isPlayingBack ? <Square size={18} /> : <Play size={18} />}
               {isPlayingBack ? 'Dừng' : 'Nghe lại'}
