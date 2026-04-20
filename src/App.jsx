@@ -617,6 +617,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { setErrorMsg('Trình duyệt không hỗ trợ. Dùng Chrome.'); return }
+    if (!navigator.onLine) { setErrorMsg('Cần kết nối internet — Speech Recognition gửi audio lên Google. Kiểm tra WiFi.'); return }
 
     setRecordingUrl(null)
     setErrorMsg(null)
@@ -628,6 +629,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
     const stopMR = () => { if (mrRef.current?.state === 'recording' || mrRef.current?.state === 'paused') mrRef.current.stop() }
     const clearTO = () => clearTimeout(timeoutRef.current)
+
+    let lastSrError = null
 
     // MediaRecorder runs independently — mic permission failure won't block SR
     navigator.mediaDevices.getUserMedia({ audio: true })
@@ -648,7 +651,6 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         mr.start(100)
       })
       .catch(err => {
-        // Recording playback unavailable — SR + scoring still work
         const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
         if (isDenied) setErrorMsg('Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.')
         else setErrorMsg(`Không truy cập được microphone: ${err.message}`)
@@ -665,23 +667,31 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       let best = alts[0], bestD = Infinity
       for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
       pendingDiagRef.current = diagnoseFromSpeech(word, best, phonemes)
-      // Don't change phase yet — wait for onend
     }
 
     rec.onerror = e => {
       clearTO()
-      // network/no-speech errors are common — show message but let onend handle phase
+      lastSrError = e.error
       const msg = SR_ERRORS[e.error]
-      if (msg !== null) setErrorMsg(msg || `Lỗi: ${e.error}`)
+      if (msg !== null) setErrorMsg(msg || `Lỗi nhận diện (${e.error})`)
     }
 
-    // onend ALWAYS fires after any stop/error — auto-score if we got a result
     rec.onend = () => {
       clearTO()
       stopMR()
       if (!pendingDiagRef.current) {
-        // SR ran but produced no transcript — don't fake 0%, show helpful error
-        setErrorMsg(prev => prev || 'Không nhận diện được giọng nói. Dùng Chrome qua HTTPS (https://...) và cấp quyền microphone.')
+        // Build targeted message from the actual error code
+        let msg
+        if (lastSrError === 'network' || lastSrError === 'aborted') {
+          msg = `Nhận diện thất bại (${lastSrError}). Speech Recognition cần internet — Chrome gửi audio lên Google. Kiểm tra WiFi và thử lại.`
+        } else if (lastSrError === 'no-speech') {
+          msg = 'Không nghe thấy giọng nói. Nói to và rõ hơn, rồi thử lại.'
+        } else if (lastSrError) {
+          msg = `Lỗi nhận diện: ${lastSrError}. Thử lại hoặc reload trang.`
+        } else {
+          msg = 'Không nhận diện được. Nói ngay sau khi nhấn nút, đủ to và rõ.'
+        }
+        setErrorMsg(prev => prev || msg)
         setPhase('ready')
         return
       }
