@@ -1,6 +1,61 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, Volume2, Star, Search, ChevronLeft, RotateCcw, BookOpen, Library } from 'lucide-react'
+import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
+
+// ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
+
+const RACHEL_URLS = {
+  'iː': 'https://rachelsenglish.com/english-pronounce-ee-vowel/',
+  'ɪ':  'https://rachelsenglish.com/english-pronounce-ih-vowel/',
+  'ɛ':  'https://rachelsenglish.com/english-pronounce-eh-vowel/',
+  'æ':  'https://rachelsenglish.com/english-pronounce-aa-ae-vowel/',
+  'ʌ':  'https://rachelsenglish.com/english-pronounce-uh-butter-vowel/',
+  'ə':  'https://rachelsenglish.com/english-pronounce-schwa/',
+  'ɜː': 'https://rachelsenglish.com/english-pronounce-ur-vowel/',
+  'uː': 'https://rachelsenglish.com/english-pronounce-oo-vowel/',
+  'ʊ':  'https://rachelsenglish.com/english-pronounce-uh-push-vowel/',
+  'ɔː': 'https://rachelsenglish.com/english-pronounce-aw-vowel/',
+  'ɑː': 'https://rachelsenglish.com/english-pronounce-ah-vowel/',
+  'oʊ': 'https://rachelsenglish.com/english-pronounce-oh-diphthong/',
+  'eɪ': 'https://rachelsenglish.com/english-pronounce-ay-diphthong/',
+  'aɪ': 'https://rachelsenglish.com/english-pronounce-ai-diphthong/',
+  'ɔɪ': 'https://rachelsenglish.com/english-pronounce-oy-diphthong/',
+  'aʊ': 'https://rachelsenglish.com/english-pronounce-ow-diphthong/',
+  'ɑːr':'https://rachelsenglish.com/pronounce-ar-orn-etc/',
+  'ɔːr':'https://rachelsenglish.com/pronounce-word-2/',
+  'ɛər':'https://rachelsenglish.com/how-to-pronounce-air/',
+  'ɪər':'https://rachelsenglish.com/vowels-ipa-pronunciation-international-phonetic-alphabet/',
+  'p':  'https://rachelsenglish.com/english-pronounce-b-p-consonants/',
+  'b':  'https://rachelsenglish.com/english-pronounce-b-p-consonants/',
+  't':  'https://rachelsenglish.com/english-pronounce-t-d-consonants/',
+  'd':  'https://rachelsenglish.com/english-pronounce-t-d-consonants/',
+  'k':  'https://rachelsenglish.com/english-pronounce-g-k-consonants/',
+  'g':  'https://rachelsenglish.com/english-pronounce-g-k-consonants/',
+  'm':  'https://rachelsenglish.com/english-pronounce-m-consonant/',
+  'n':  'https://rachelsenglish.com/english-pronounce-n-consonant/',
+  'ŋ':  'https://rachelsenglish.com/pronounce-n-n-vs-ng-n/',
+  'f':  'https://rachelsenglish.com/english-pronounce-f-v-consonants/',
+  'v':  'https://rachelsenglish.com/english-pronounce-f-v-consonants/',
+  'θ':  'https://rachelsenglish.com/english-pronounce-th-consonants/',
+  'ð':  'https://rachelsenglish.com/english-pronounce-th-consonants/',
+  's':  'https://rachelsenglish.com/english-pronounce-s-z-consonants/',
+  'z':  'https://rachelsenglish.com/english-pronounce-s-z-consonants/',
+  'ʃ':  'https://rachelsenglish.com/english-pronounce-sh-zh-consonants/',
+  'ʒ':  'https://rachelsenglish.com/english-pronounce-sh-zh-consonants/',
+  'h':  'https://rachelsenglish.com/english-pronounce-h-consonant/',
+  'r':  'https://rachelsenglish.com/5-tips-for-r-in-american-english/',
+  'j':  'https://rachelsenglish.com/english-pronounce-y-consonant/',
+  'w':  'https://rachelsenglish.com/pronounce-w-consonant/',
+  'l':  'https://rachelsenglish.com/english-pronounce-l-consonant/',
+  'tʃ': 'https://rachelsenglish.com/english-pronounce-ch-jj-sounds/',
+  'dʒ': 'https://rachelsenglish.com/english-pronounce-ch-jj-sounds/',
+  'ɾ':  'https://rachelsenglish.com/t-pronunciations/',
+}
+
+// YouTube search URL for Rachel's English for a given IPA label
+function rachelYouTubeSearch(label) {
+  return `https://www.youtube.com/results?search_query=rachel%27s+english+${encodeURIComponent(label)}+sound`
+}
 
 // ─── PHONEME ENGINE ────────────────────────────────────────────────────────
 
@@ -441,6 +496,11 @@ function diagnoseFromSpeech(targetWord, spokenText, targetPhonemes) {
 
 // ─── AUDIO HELPERS ────────────────────────────────────────────────────────
 
+function getSupportedMimeType() {
+  const candidates = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4']
+  return candidates.find(t => MediaRecorder.isTypeSupported(t)) || ''
+}
+
 if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.getVoices()
   window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices()
@@ -478,33 +538,76 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [phase, setPhase] = useState('ready')
   const [result, setResult] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
+  const [recordingUrl, setRecordingUrl] = useState(null)
+  const [isPlayingBack, setIsPlayingBack] = useState(false)
   const recogRef = useRef(null)
+  const mrRef = useRef(null)
+  const streamRef = useRef(null)
+  const audioRef = useRef(null)
+
+  useEffect(() => () => {
+    if (recordingUrl) URL.revokeObjectURL(recordingUrl)
+  }, [recordingUrl])
 
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { alert('Trình duyệt không hỗ trợ nhận dạng giọng nói. Dùng Chrome.'); return }
+
+    setRecordingUrl(null)
     const rec = new SR()
     rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 5
     recogRef.current = rec
+
+    // MediaRecorder for playback capture
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      streamRef.current = stream
+      const mimeType = getSupportedMimeType()
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
+      mrRef.current = mr
+      const chunks = []
+      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = () => {
+        const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+        setRecordingUrl(URL.createObjectURL(blob))
+        stream.getTracks().forEach(t => t.stop())
+      }
+      mr.start(100)
+    }).catch(() => {})
+
     rec.onstart = () => setPhase('listening')
     rec.onresult = e => {
+      if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
       const alts = Array.from(e.results[0]).map(r => r.transcript)
       let best = alts[0], bestD = Infinity
       for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
       const diag = diagnoseFromSpeech(word, best, phonemes)
       setResult(diag); setPhase('result')
     }
-    rec.onerror = e => { console.warn('SR error', e.error); setPhase('ready') }
-    rec.onend = () => { if (phase === 'listening') setPhase('ready') }
+    rec.onerror = e => { console.warn('SR error', e.error); if (mrRef.current?.state !== 'inactive') mrRef.current?.stop(); setPhase('ready') }
+    rec.onend = () => { if (mrRef.current?.state !== 'inactive') mrRef.current?.stop() }
     rec.start()
-  }, [word, phonemes, phase])
+  }, [word, phonemes])
 
-  const reset = () => { recogRef.current?.abort(); setPhase('ready'); setResult(null); setSelectedIdx(null) }
+  const reset = () => {
+    recogRef.current?.abort()
+    if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    setPhase('ready'); setResult(null); setSelectedIdx(null); setRecordingUrl(null); setIsPlayingBack(false)
+  }
+
+  const playbackRecording = () => {
+    if (!recordingUrl || !audioRef.current) return
+    if (isPlayingBack) { audioRef.current.pause(); audioRef.current.currentTime = 0; setIsPlayingBack(false); return }
+    audioRef.current.src = recordingUrl
+    audioRef.current.onended = () => setIsPlayingBack(false)
+    audioRef.current.play().then(() => setIsPlayingBack(true)).catch(() => setIsPlayingBack(false))
+  }
 
   const sel = selectedIdx !== null && result ? result.phonemes[selectedIdx] : null
 
   return (
     <div className="flex flex-col h-full">
+      <audio ref={audioRef} className="hidden" />
       {/* Word header */}
       <div className="text-center py-6 px-4">
         <div className="text-5xl mb-2">{emoji}</div>
@@ -583,10 +686,18 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
             Làm lại
           </button>
         )}
-        <button onClick={() => speak(word)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
-          <Volume2 size={18} />
-          Nghe mẫu
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => speak(word)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            <Volume2 size={18} />
+            Nghe mẫu
+          </button>
+          {recordingUrl && (
+            <button onClick={playbackRecording} className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+              {isPlayingBack ? <Square size={18} /> : <Play size={18} />}
+              {isPlayingBack ? 'Dừng' : 'Nghe lại'}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -669,6 +780,37 @@ function SoundDetailScreen({ sound, onBack, onPracticeWord }) {
         {sound.hard && <span className="inline-block bg-yellow-400/20 border border-yellow-400/40 text-yellow-300 text-xs rounded-lg px-2 py-0.5">★ Khó với người Việt</span>}
         <div className="mt-4 bg-white/10 rounded-2xl p-3">
           <p className="text-white/90 text-sm leading-relaxed">{sound.tip}</p>
+        </div>
+      </div>
+
+      {/* Rachel's English links */}
+      <div className="px-4 mb-6">
+        <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Học thêm</div>
+        <div className="flex flex-col gap-2">
+          {RACHEL_URLS[sound.ipa] && (
+            <a href={RACHEL_URLS[sound.ipa]} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition-colors active:scale-98">
+              <div className="w-8 h-8 rounded-xl bg-rose-500/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-rose-400 text-xs font-bold">RE</span>
+              </div>
+              <div className="flex-1 text-left">
+                <div className="text-white/80 text-sm font-medium">Rachel's English</div>
+                <div className="text-white/40 text-xs">Hướng dẫn chi tiết âm /{sound.ipa}/</div>
+              </div>
+              <ExternalLink size={14} className="text-white/30" />
+            </a>
+          )}
+          <a href={rachelYouTubeSearch(sound.label)} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition-colors active:scale-98">
+            <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center flex-shrink-0">
+              <Play size={14} className="text-red-400 fill-red-400" />
+            </div>
+            <div className="flex-1 text-left">
+              <div className="text-white/80 text-sm font-medium">YouTube — Rachel's English</div>
+              <div className="text-white/40 text-xs">Video hướng dẫn âm {sound.label}</div>
+            </div>
+            <ExternalLink size={14} className="text-white/30" />
+          </a>
         </div>
       </div>
 
