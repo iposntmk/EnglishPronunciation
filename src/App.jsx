@@ -23,9 +23,14 @@ function loadWhisper(onProgress) {
 
 async function transcribeBlob(blob, onProgress) {
   const pipe = await loadWhisper(onProgress)
-  const ab = await blob.arrayBuffer()
-  const out = await pipe(ab)
-  return out.text.toLowerCase().replace(/[^a-z\s']/g, '').trim()
+  // Pass blob URL — transformers.js fetches + decodes + resamples internally
+  const url = URL.createObjectURL(blob)
+  try {
+    const out = await pipe(url)
+    return out.text.toLowerCase().replace(/[^a-z\s']/g, '').trim()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
