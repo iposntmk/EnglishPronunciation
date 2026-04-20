@@ -1,40 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
-
-// ─── PRONUNCIATION SCORING (Python backend: faster-whisper + GoP) ─────────
-
-async function scorePronunciation(blob, word, targetIpaList) {
-  const form = new FormData()
-  form.append('audio', new File([blob], 'rec.webm', { type: blob.type }))
-  form.append('word', word)
-  form.append('target_ipa', JSON.stringify(targetIpaList))
-  let res
-  try {
-    res = await fetch('/api/score', { method: 'POST', body: form })
-  } catch {
-    throw new Error('Không kết nối được backend — hãy chạy: cd backend && uvicorn main:app --port 8000')
-  }
-  if (!res.ok) {
-    const ct = res.headers.get('content-type') || ''
-    if (ct.includes('text/html')) {
-      throw new Error('Backend chưa chạy — mở terminal và chạy: cd backend && uvicorn main:app --port 8000')
-    }
-    const msg = await res.text().catch(() => `HTTP ${res.status}`)
-    throw new Error(msg)
-  }
-  return res.json()
-}
-
-// Merge backend scores with local phoneme metadata (tip, isHard, text…)
-function buildResult(apiData, targetPhonemes) {
-  const phonemes = targetPhonemes.map((p, i) => {
-    const r = apiData.phonemes?.[i] ?? { score: 0, note: null }
-    return { ...p, score: r.score, note: r.note }
-  })
-  const overall = apiData.overall ?? Math.round(phonemes.reduce((s, p) => s + p.score, 0) / phonemes.length)
-  return { phonemes, overall, spokenWord: apiData.spokenWord ?? null }
-}
+import { ensureModelLoaded, isModelReady, scoreWord } from './scorer.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -503,82 +470,6 @@ function g2p(word) {
     .map(p => ({ ...p, tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`, isHard: PHONEME_INFO[p.ipa]?.hard || false }))
 }
 
-function levenshteinAlign(src, dst) {
-  const m = src.length, n = dst.length
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
-  for (let i = 0; i <= m; i++) dp[i][0] = i
-  for (let j = 0; j <= n; j++) dp[0][j] = j
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++) {
-      const cost = src[i - 1] === dst[j - 1] ? 0 : 1
-      dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + cost)
-    }
-  const align = new Array(m).fill(null)
-  let i = m, j = n
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && dp[i][j] === dp[i-1][j-1] + (src[i-1] === dst[j-1] ? 0 : 1)) {
-      align[i - 1] = dst[j - 1]; i--; j--
-    } else if (j > 0 && dp[i][j] === dp[i][j-1] + 1) {
-      j--
-    } else { i-- }
-  }
-  return align
-}
-
-const PHONE_SIMILAR = {
-  'θ': ['s','f','t','d'], 'ð': ['d','z','v'],
-  'r': ['l','w','ər'],    'l': ['r','n'],
-  'æ': ['ɛ','ʌ','ɑː'],   'ɪ': ['iː','ɛ'],
-  'ʌ': ['æ','ɑː','ə'],   'v': ['b','f','w'],
-  'w': ['v','b'],         'ʒ': ['ʃ','z'],
-  'ɜː':['ər','ɔː'],       'ʊ': ['uː','ʌ'],
-}
-function phoneSimilarity(a, b) {
-  if (a === b) return 1
-  if (PHONE_SIMILAR[a]?.includes(b) || PHONE_SIMILAR[b]?.includes(a)) return 0.25
-  return 0.05
-}
-
-function levDist(a, b) {
-  const m = a.length, n = b.length
-  const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i || j))
-  for (let i = 1; i <= m; i++)
-    for (let j = 1; j <= n; j++)
-      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
-  return dp[m][n]
-}
-
-function diagnoseFromSpeech(targetWord, spokenText, targetPhonemes) {
-  const target = targetWord.toLowerCase().trim()
-  const spoken = (spokenText || '').toLowerCase().replace(/[^a-z\s]/g, '').trim()
-  if (!spoken) {
-    return { phonemes: targetPhonemes.map(p => ({ ...p, score: 0, note: 'Không nhận diện được' })), overall: 0, spokenWord: null }
-  }
-  const firstSpokenWord = spoken.split(/\s+/)[0]
-  if (firstSpokenWord === target || spoken === target) {
-    const ph = targetPhonemes.map(p => ({ ...p, score: 85 + Math.floor(Math.random() * 15), note: null }))
-    return { phonemes: ph, overall: Math.round(ph.reduce((s, p) => s + p.score, 0) / ph.length), spokenWord: spoken }
-  }
-  const candidates = spoken.split(/\s+/)
-  let bestWord = candidates[0], bestDist = Infinity
-  for (const cand of candidates) {
-    const d = levDist(cand, target)
-    if (d < bestDist) { bestDist = d; bestWord = cand }
-  }
-  const spokenPhonemes = lookupWord(bestWord)
-  const targetIPAs = targetPhonemes.map(p => p.ipa)
-  const spokenIPAs = spokenPhonemes.map(p => p.ipa)
-  const alignment = levenshteinAlign(targetIPAs, spokenIPAs)
-  const scored = targetPhonemes.map((p, idx) => {
-    const got = alignment[idx]
-    if (!got) return { ...p, score: 15, note: `Âm /${p.ipa}/ bị bỏ qua` }
-    if (got === p.ipa) return { ...p, score: 85 + Math.floor(Math.random() * 15), note: null }
-    const sim = phoneSimilarity(p.ipa, got)
-    return { ...p, score: Math.round(sim * 80), note: `Nghe như /${got}/ — cần /${p.ipa}/`, spokenIpa: got }
-  })
-  const overall = Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
-  return { phonemes: scored, overall, spokenWord: bestWord }
-}
 
 // ─── AUDIO HELPERS ────────────────────────────────────────────────────────
 
@@ -622,17 +513,34 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 
 function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const phonemes = lookupWord(word)
-  // phases: ready → recording → recorded → result
+  // phases: ready → recording → scoring → result
   const [phase, setPhase] = useState('ready')
   const [errorMsg, setErrorMsg] = useState(null)
   const [result, setResult] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
+  const [modelReady, setModelReady] = useState(isModelReady)
+  const [loadPct, setLoadPct] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
+
+  // Preload model when this screen opens
+  useEffect(() => {
+    if (isModelReady()) { setModelReady(true); return }
+    const totals = {}
+    ensureModelLoaded(ev => {
+      if (ev.status === 'progress') {
+        totals[ev.file] = { loaded: ev.loaded, total: ev.total }
+        const vals = Object.values(totals)
+        const pct = vals.reduce((s, x) => s + x.loaded, 0) / Math.max(1, vals.reduce((s, x) => s + x.total, 0))
+        setLoadPct(Math.round(pct * 100))
+      }
+      if (ev.status === 'ready') setModelReady(true)
+    }).then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
+  }, [])
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
@@ -660,14 +568,14 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           }
           const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
           setRecordingUrl(URL.createObjectURL(blob))
-          setPhase('recorded')
-
+          setPhase('scoring')
           try {
-            const data = await scorePronunciation(blob, word, phonemes.map(p => p.ipa))
-            setResult(buildResult(data, phonemes))
+            const data = await scoreWord(blob, phonemes)
+            setResult(data)
             setPhase('result')
           } catch (err) {
             setErrorMsg(`Lỗi chấm điểm: ${err.message}`)
+            setPhase('ready')
           }
         }
 
@@ -784,9 +692,23 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </div>
         )}
 
+        {/* Model loading indicator */}
+        {!modelReady && (
+          <div className="w-full rounded-2xl py-3 px-4 bg-white/5 border border-white/10 text-white/60 text-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+              Đang tải mô hình AI ({loadPct}%)...
+            </div>
+            <div className="w-full bg-white/10 rounded-full h-1.5">
+              <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${loadPct}%` }} />
+            </div>
+          </div>
+        )}
+
         {/* Bước 1: ready */}
         {phase === 'ready' && (
-          <button onClick={startRecording} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
+          <button onClick={startRecording} disabled={!modelReady}
+            className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none">
             <Mic size={24} />
             Bắt đầu ghi âm
           </button>
@@ -800,8 +722,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </button>
         )}
 
-        {/* Bước 3: recorded — nghe lại + chờ backend chấm điểm */}
-        {phase === 'recorded' && (
+        {/* Bước 3: scoring — chạy mô hình local */}
+        {phase === 'scoring' && (
           <>
             {recordingUrl && (
               <button onClick={playbackRecording}
@@ -810,12 +732,10 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
                 {isPlayingBack ? 'Dừng' : 'Nghe lại bản ghi'}
               </button>
             )}
-            {!errorMsg && (
-              <div className="w-full rounded-2xl py-3 bg-white/5 border border-white/10 text-white/50 flex items-center justify-center gap-2">
-                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-                Đang chấm điểm...
-              </div>
-            )}
+            <div className="w-full rounded-2xl py-3 bg-white/5 border border-white/10 text-white/50 flex items-center justify-center gap-2">
+              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+              Đang phân tích phát âm...
+            </div>
             <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
               <RotateCcw size={18} />
               Thử lại
