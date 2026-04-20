@@ -5,11 +5,8 @@ env.useBrowserCache = true
 
 const MODEL_ID = 'Xenova/wav2vec2-base-960h'
 
-// Hardcoded vocab for wav2vec2-base-960h
-const VOCAB = Object.fromEntries(
-  ['<pad>','<unk>','|','E','T','A','O','I','N','S','R','H','L','D','C','U','M','F','P','G','W','Y','B','V','K','X','J','Q','Z']
-  .map((c, i) => [c, i])
-)
+const VOCAB_ARR = ['<pad>','<unk>','|','E','T','A','O','I','N','S','R','H','L','D','C','U','M','F','P','G','W','Y','B','V','K','X','J','Q','Z']
+const VOCAB = Object.fromEntries(VOCAB_ARR.map((c, i) => [c, i]))
 
 let _processor = null
 let _model = null
@@ -49,7 +46,6 @@ async function decodeAudioTo16kHz(blob) {
   return resampled.getChannelData(0)
 }
 
-// Returns [{pi, id}] — character token id per phoneme group
 function buildCharMap(phonemes) {
   const result = []
   for (let pi = 0; pi < phonemes.length; pi++) {
@@ -74,8 +70,8 @@ function logSoftmax(data, T, V) {
   return out
 }
 
-// CTC forced alignment via Viterbi. Returns state-index sequence (length T).
-// Even state indices = blank; odd state 2i+1 = targets[i].
+// Viterbi CTC forced alignment. Returns state-index sequence length T.
+// Odd states 2i+1 correspond to targets[i]; even states = blank.
 function ctcForcedAlign(lp, targets, T, V, blank = 0) {
   const N = targets.length
   if (N === 0) return new Int16Array(T)
@@ -118,12 +114,31 @@ function ctcForcedAlign(lp, targets, T, V, blank = 0) {
   return seq
 }
 
+// Greedy CTC decode → recognized lowercase text
+function greedyCTCDecode(lp, T, V) {
+  let prev = 0
+  const chars = []
+  for (let t = 0; t < T; t++) {
+    const off = t * V
+    let maxV = 0, maxLp = lp[off]
+    for (let v = 1; v < V; v++) {
+      if (lp[off + v] > maxLp) { maxLp = lp[off + v]; maxV = v }
+    }
+    if (maxV !== 0 && maxV !== prev) {
+      const c = VOCAB_ARR[maxV]
+      if (c && c !== '|' && c !== '<unk>') chars.push(c)
+    }
+    prev = maxV
+  }
+  return chars.join('').toLowerCase()
+}
+
 export async function scoreWord(audioBlob, phonemes) {
   await ensureModelLoaded()
 
   const pcm = await decodeAudioTo16kHz(audioBlob)
   const inputs = await _processor(pcm, { sampling_rate: 16000 })
-  const { logits } = await _model(inputs)   // [1, T, V]
+  const { logits } = await _model(inputs)  // [1, T, V]
   const [, T, V] = logits.dims
   const lp = logSoftmax(logits.data, T, V)
 
@@ -133,31 +148,62 @@ export async function scoreWord(audioBlob, phonemes) {
   const targets = charMap.map(x => x.id)
   const stateSeq = ctcForcedAlign(lp, targets, T, V)
 
-  // Collect per-character log-probs
-  const charLps = Array.from({ length: charMap.length }, () => [])
+  // Per-character: collect relative log-prob (target vs best at each frame)
+  // and the most-voted non-target character for feedback notes
+  const charData = Array.from({ length: charMap.length }, () => ({ relLps: [], altIds: [] }))
   for (let t = 0; t < T; t++) {
     const s = stateSeq[t]
-    if (s % 2 === 1) {
-      const ci = (s - 1) / 2
-      if (ci < charMap.length) charLps[ci].push(lp[t * V + targets[ci]])
+    if (s % 2 !== 1) continue  // blank frame
+    const ci = (s - 1) / 2
+    if (ci >= charMap.length) continue
+    const off = t * V
+    let maxLp = lp[off], maxId = 0
+    for (let v = 1; v < V; v++) {
+      if (lp[off + v] > maxLp) { maxLp = lp[off + v]; maxId = v }
     }
+    // Relative log-prob: 0 = target is best, negative = something else is better
+    charData[ci].relLps.push(lp[off + targets[ci]] - maxLp)
+    if (maxId !== targets[ci]) charData[ci].altIds.push(maxId)
   }
-  const charAvg = charLps.map(lps =>
-    lps.length ? lps.reduce((a, b) => a + b, 0) / lps.length : -9
-  )
 
-  // Aggregate characters → phonemes
-  const phonemeLps = phonemes.map(() => [])
-  charMap.forEach(({ pi }, ci) => phonemeLps[pi].push(charAvg[ci]))
+  // Score each character using relative log-prob calibrated to [0, 100]
+  // Range: 0 (target is best) → 100; ~−3.4 (uniform random) → ~32; −5 → 41 clipped to 0
+  // Using sigmoid-like shape: score = 100 * exp(3 * avgRel) clamped to [0, 100]
+  const charScores = charData.map(({ relLps, altIds }, ci) => {
+    if (relLps.length === 0) return { score: 10, heardChar: null }
+    const avgRel = relLps.reduce((a, b) => a + b, 0) / relLps.length
+    // 100 * e^(3*avg): at 0 → 100, at -0.7 → 12, at -1 → 5... too harsh
+    // Linear: [−4, 0] → [0, 100]
+    const score = Math.max(0, Math.min(100, Math.round((avgRel + 4) / 4 * 100)))
 
-  const scored = phonemes.map((p, pi) => {
-    const lps = phonemeLps[pi]
-    const avg = lps.length ? lps.reduce((a, b) => a + b, 0) / lps.length : -9
-    // Calibrate: log-prob range [-9, -0.5] → [0, 100]
-    const score = Math.max(0, Math.min(100, Math.round((avg + 9) / 8.5 * 100)))
-    return { ...p, score, note: null }
+    // Most-voted alt character (what was actually heard instead)
+    let heardChar = null
+    if (altIds.length > altIds.length / 2) {  // majority of frames heard something else
+      const freq = {}
+      altIds.forEach(id => freq[id] = (freq[id] || 0) + 1)
+      const topId = Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0])
+      // Only report if heard on > 40% of frames
+      if ((freq[topId] / relLps.length) > 0.4) {
+        const c = VOCAB_ARR[topId]
+        if (c && c !== '|' && c !== '<unk>' && c !== '<pad>') heardChar = c.toLowerCase()
+      }
+    }
+    return { score, heardChar }
   })
 
+  // Aggregate characters → phonemes
+  const scored = phonemes.map((p, pi) => {
+    const chars = charMap.map((c, ci) => c.pi === pi ? charScores[ci] : null).filter(Boolean)
+    if (chars.length === 0) return { ...p, score: 0, note: null }
+
+    // Use minimum score across characters — weakest character limits phoneme quality
+    const score = Math.round(chars.reduce((s, c) => s + c.score, 0) / chars.length)
+    const heard = chars.map(c => c.heardChar).filter(Boolean).join('')
+    const note = heard && score < 70 ? `Nghe như /${heard}/` : null
+    return { ...p, score, note }
+  })
+
+  const spokenWord = greedyCTCDecode(lp, T, V)
   const overall = Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
-  return { phonemes: scored, overall, spokenWord: phonemes.map(p => p.text).join('') }
+  return { phonemes: scored, overall, spokenWord: spokenWord || phonemes.map(p => p.text).join('') }
 }
