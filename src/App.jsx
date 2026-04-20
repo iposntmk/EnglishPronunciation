@@ -531,13 +531,475 @@ function simulateScore(ipa) {
   return Math.min(100, Math.max(20, base + Math.floor(Math.random() * 45)))
 }
 
+// Pre-load voices (Chrome mobile requires this)
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  window.speechSynthesis.getVoices()
+  window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices()
+}
+
 function speak(text) {
-  window.speechSynthesis.cancel()
-  const utt = new SpeechSynthesisUtterance(text)
-  utt.lang = 'en-US'
-  utt.rate = 0.8
-  utt.pitch = 1
-  window.speechSynthesis.speak(utt)
+  const syn = window.speechSynthesis
+  if (!syn) return
+  syn.cancel()
+
+  const doSpeak = () => {
+    const utt = new SpeechSynthesisUtterance(text)
+    utt.lang = 'en-US'
+    utt.rate = 0.8
+    utt.pitch = 1
+    const voices = syn.getVoices()
+    const pick = voices.find(v => v.lang === 'en-US' && v.name.includes('Google'))
+      || voices.find(v => v.lang === 'en-US')
+      || voices.find(v => v.lang.startsWith('en'))
+    if (pick) utt.voice = pick
+    syn.speak(utt)
+  }
+
+  const voices = syn.getVoices()
+  if (voices.length > 0) {
+    doSpeak()
+  } else {
+    // Voices not loaded yet — wait for them
+    syn.onvoiceschanged = () => { syn.onvoiceschanged = null; doSpeak() }
+    // Fallback timeout in case onvoiceschanged never fires
+    setTimeout(() => { if (syn.getVoices().length > 0) doSpeak() }, 300)
+  }
+}
+
+function getSupportedMimeType() {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+    'audio/mp4',
+  ]
+  return candidates.find(t => MediaRecorder.isTypeSupported(t)) || ''
+}
+
+// ─── PHONEME ENGINE ────────────────────────────────────────────────────────
+
+const PHONEME_INFO = {
+  'θ':  { tip: 'Đặt đầu lưỡi giữa hai hàm răng, thổi khí không rung họng', hard: true },
+  'ð':  { tip: 'Lưỡi giữa răng nhưng rung họng (voiced)', hard: true },
+  'r':  { tip: 'Cuộn lưỡi ra sau không chạm gì, môi hơi tròn', hard: true },
+  'l':  { tip: 'Đầu lưỡi chạm sau răng cửa trên', hard: false },
+  'æ':  { tip: 'Mở miệng rộng, kéo về phía trước — "cat, bad"', hard: true },
+  'ɪ':  { tip: 'Âm /i/ ngắn — lưỡi cao, miệng thư giãn hơn /iː/', hard: false },
+  'iː': { tip: 'Âm /i/ dài, kéo hai góc môi sang ngang', hard: false },
+  'ʌ':  { tip: 'Giống "ă" Việt, miệng mở vừa, lưỡi giữa-thấp', hard: true },
+  'ɜː': { tip: 'Môi tròn nhẹ, lưỡi giữa, cuộn ra sau — "bird, word"', hard: true },
+  'ɑː': { tip: 'Âm "a" dài, mở miệng rộng', hard: false },
+  'ɔː': { tip: 'Môi tròn, miệng mở vừa — "saw, call"', hard: false },
+  'ʊ':  { tip: 'Âm /u/ ngắn, môi tròn nhẹ — "book, good"', hard: true },
+  'uː': { tip: 'Âm /u/ dài, môi tròn căng — "food, moon"', hard: false },
+  'ə':  { tip: 'Schwa — âm trung hòa, miệng hoàn toàn thư giãn', hard: false },
+  'ər': { tip: 'Schwa + cuộn lưỡi nhẹ (giọng Mỹ)', hard: false },
+  'eɪ': { tip: 'Diphthong: "e" trượt lên "i" — "day, make"', hard: false },
+  'aɪ': { tip: 'Diphthong: "a" rộng trượt lên "i" — "night, like"', hard: false },
+  'aʊ': { tip: 'Diphthong: "a" trượt lên "u" — "now, out"', hard: false },
+  'oʊ': { tip: 'Diphthong: "o" trượt lên "u" — "go, road"', hard: false },
+  'ɔɪ': { tip: 'Diphthong: "oi" trong "boy, voice"', hard: false },
+  'ɛər':{ tip: 'Diphthong: /ɛ/ + /ər/ — "there, where"', hard: false },
+  'ɪər':{ tip: 'Diphthong: /ɪ/ + /ər/ — "here, ear"', hard: false },
+  'ʊər':{ tip: 'Diphthong: /ʊ/ + /ər/ — "tour, sure"', hard: false },
+  'v':  { tip: 'Răng cửa trên đặt lên môi dưới, rung họng', hard: true },
+  'w':  { tip: 'Chu môi tròn như "oa", không dùng răng', hard: true },
+  'f':  { tip: 'Răng trên + môi dưới, thổi khí không rung', hard: false },
+  'ŋ':  { tip: 'Lưỡi chạm vòm mềm phía sau, âm mũi', hard: false },
+  'ŋk': { tip: 'Lưỡi chạm vòm mềm + bật k nhẹ cuối', hard: false },
+  'ŋg': { tip: 'Lưỡi chạm vòm mềm + g rung', hard: false },
+  'ʃ':  { tip: 'Chu môi nhẹ, thổi khí — "sh" trong "ship"', hard: false },
+  'tʃ': { tip: 'Kết hợp t + ʃ — "ch" trong "church"', hard: false },
+  'dʒ': { tip: 'Kết hợp d + ʒ — "j" trong "judge"', hard: false },
+  'ʒ':  { tip: 'Giống "sh" nhưng rung họng — "s" trong "measure"', hard: true },
+  'n':  { tip: 'Lưỡi chạm sau răng trên, âm mũi', hard: false },
+  'm':  { tip: 'Khép môi, rung mũi', hard: false },
+  'p':  { tip: 'Bật môi, thổi khí (aspirated)', hard: false },
+  'b':  { tip: 'Bật môi, rung họng', hard: false },
+  't':  { tip: 'Lưỡi chạm sau răng trên, bật ra', hard: false },
+  'd':  { tip: 'Lưỡi chạm sau răng, rung họng', hard: false },
+  'k':  { tip: 'Lưỡi chạm vòm mềm, bật ra', hard: false },
+  'g':  { tip: 'Lưỡi chạm vòm mềm, rung họng', hard: false },
+  's':  { tip: 'Đầu lưỡi gần răng trên, thổi khí', hard: false },
+  'z':  { tip: 'Giống /s/ nhưng rung họng', hard: false },
+  'h':  { tip: 'Thổi khí từ họng nhẹ nhàng', hard: false },
+  'j':  { tip: 'Âm "y" đầu — lưỡi cao, miệng hé', hard: false },
+}
+
+// word → [[text_chunk, ipa_symbol], ...]  (tips looked up from PHONEME_INFO)
+const WORD_IPA_RAW = {
+  about:[['a','ə'],['b','b'],['ou','aʊ'],['t','t']],
+  after:[['a','æ'],['f','f'],['ter','tər']],
+  again:[['a','ə'],['g','g'],['ai','eɪ'],['n','n']],
+  all:[['all','ɔːl']],
+  also:[['al','ɔːl'],['so','soʊ']],
+  always:[['al','ɔːl'],['ways','weɪz']],
+  another:[['an','ə'],['oth','ʌð'],['er','ər']],
+  answer:[['an','æn'],['swer','sər']],
+  ask:[['a','æ'],['sk','sk']],
+  back:[['b','b'],['a','æ'],['ck','k']],
+  bad:[['b','b'],['a','æ'],['d','d']],
+  bath:[['b','b'],['a','æ'],['th','θ']],
+  beautiful:[['beau','bjuː'],['ti','tɪ'],['ful','fəl']],
+  because:[['be','bɪ'],['cause','kɔːz']],
+  bed:[['b','b'],['e','ɛ'],['d','d']],
+  bird:[['b','b'],['ir','ɜː'],['d','d']],
+  book:[['b','b'],['oo','ʊ'],['k','k']],
+  both:[['b','b'],['o','oʊ'],['th','θ']],
+  brother:[['br','br'],['o','ʌ'],['th','ð'],['er','ər']],
+  but:[['b','b'],['u','ʌ'],['t','t']],
+  call:[['c','k'],['all','ɔːl']],
+  can:[['c','k'],['a','æ'],['n','n']],
+  cat:[['c','k'],['a','æ'],['t','t']],
+  child:[['ch','tʃ'],['i','aɪ'],['ld','ld']],
+  cold:[['c','k'],['o','oʊ'],['ld','ld']],
+  come:[['c','k'],['ome','ʌm']],
+  computer:[['com','kəm'],['pu','pjuː'],['ter','tər']],
+  cup:[['c','k'],['u','ʌ'],['p','p']],
+  day:[['d','d'],['ay','eɪ']],
+  different:[['dif','dɪf'],['fer','fər'],['ent','ənt']],
+  do:[['d','d'],['o','uː']],
+  dog:[['d','d'],['o','ɑː'],['g','g']],
+  each:[['ea','iː'],['ch','tʃ']],
+  earth:[['ear','ɜː'],['th','θ']],
+  eat:[['ea','iː'],['t','t']],
+  enough:[['e','ɪ'],['nough','nʌf']],
+  every:[['ev','ɛv'],['er','ər'],['y','i']],
+  face:[['f','f'],['a','eɪ'],['ce','s']],
+  family:[['fam','fæm'],['i','ɪ'],['ly','li']],
+  father:[['fa','fɑː'],['th','ð'],['er','ər']],
+  feel:[['f','f'],['ee','iː'],['l','l']],
+  find:[['f','f'],['i','aɪ'],['nd','nd']],
+  five:[['f','f'],['ive','aɪv']],
+  flower:[['fl','fl'],['ow','aʊ'],['er','ər']],
+  food:[['f','f'],['oo','uː'],['d','d']],
+  friend:[['fr','fr'],['ie','ɛ'],['nd','nd']],
+  future:[['fu','fjuː'],['ture','tʃər']],
+  get:[['g','g'],['e','ɛ'],['t','t']],
+  girl:[['g','g'],['ir','ɜː'],['l','l']],
+  give:[['g','g'],['ive','ɪv']],
+  good:[['g','g'],['oo','ʊ'],['d','d']],
+  great:[['gr','gr'],['ea','eɪ'],['t','t']],
+  hand:[['h','h'],['a','æ'],['nd','nd']],
+  happy:[['hap','hæp'],['py','pi']],
+  hard:[['h','h'],['ar','ɑːr'],['d','d']],
+  have:[['h','h'],['a','æ'],['ve','v']],
+  hello:[['hel','hɛl'],['lo','oʊ']],
+  help:[['h','h'],['e','ɛ'],['lp','lp']],
+  here:[['h','h'],['ere','ɪər']],
+  high:[['h','h'],['igh','aɪ']],
+  home:[['h','h'],['ome','oʊm']],
+  house:[['h','h'],['ou','aʊ'],['se','z']],
+  how:[['h','h'],['ow','aʊ']],
+  important:[['im','ɪm'],['por','pɔːr'],['tant','tənt']],
+  just:[['j','dʒ'],['u','ʌ'],['st','st']],
+  keep:[['k','k'],['ee','iː'],['p','p']],
+  know:[['kn','n'],['ow','oʊ']],
+  knowledge:[['know','nɑː'],['ledge','lɪdʒ']],
+  language:[['lan','læŋ'],['guage','gwɪdʒ']],
+  large:[['l','l'],['ar','ɑːr'],['ge','dʒ']],
+  last:[['l','l'],['a','æ'],['st','st']],
+  learn:[['l','l'],['ear','ɜː'],['n','n']],
+  led:[['l','l'],['e','ɛ'],['d','d']],
+  life:[['l','l'],['i','aɪ'],['fe','f']],
+  light:[['l','l'],['igh','aɪ'],['t','t']],
+  like:[['l','l'],['i','aɪ'],['ke','k']],
+  little:[['lit','lɪt'],['tle','əl']],
+  live:[['l','l'],['i','ɪ'],['ve','v']],
+  load:[['l','l'],['oa','oʊ'],['d','d']],
+  long:[['l','l'],['o','ɔː'],['ng','ŋ']],
+  look:[['l','l'],['oo','ʊ'],['k','k']],
+  love:[['l','l'],['ove','ʌv']],
+  make:[['m','m'],['a','eɪ'],['ke','k']],
+  man:[['m','m'],['a','æ'],['n','n']],
+  match:[['m','m'],['a','æ'],['tch','tʃ']],
+  measure:[['mea','mɛ'],['sure','ʒər']],
+  mother:[['m','m'],['o','ʌ'],['th','ð'],['er','ər']],
+  much:[['m','m'],['u','ʌ'],['ch','tʃ']],
+  music:[['mu','mjuː'],['sic','zɪk']],
+  name:[['n','n'],['a','eɪ'],['me','m']],
+  nature:[['na','neɪ'],['ture','tʃər']],
+  need:[['n','n'],['ee','iː'],['d','d']],
+  next:[['n','n'],['e','ɛ'],['xt','kst']],
+  night:[['n','n'],['igh','aɪ'],['t','t']],
+  nothing:[['no','nʌ'],['th','θ'],['ing','ɪŋ']],
+  now:[['n','n'],['ow','aʊ']],
+  often:[['of','ɔː'],['ten','tən']],
+  old:[['o','oʊ'],['ld','ld']],
+  only:[['on','oʊn'],['ly','li']],
+  other:[['o','ʌ'],['th','ð'],['er','ər']],
+  out:[['ou','aʊ'],['t','t']],
+  people:[['peo','piː'],['ple','pəl']],
+  photo:[['pho','foʊ'],['to','toʊ']],
+  place:[['pl','pl'],['a','eɪ'],['ce','s']],
+  please:[['pl','pl'],['ea','iː'],['se','z']],
+  problem:[['pro','prɑː'],['blem','bləm']],
+  pronunciation:[['pro','prə'],['nun','nʌn'],['ci','sɪ'],['a','eɪ'],['tion','ʃən']],
+  put:[['p','p'],['u','ʊ'],['t','t']],
+  question:[['que','kwɛs'],['tion','tʃən']],
+  read:[['r','r'],['ea','iː'],['d','d']],
+  really:[['r','r'],['ea','iː'],['ll','l'],['y','i']],
+  red:[['r','r'],['e','ɛ'],['d','d']],
+  right:[['r','r'],['igh','aɪ'],['t','t']],
+  road:[['r','r'],['oa','oʊ'],['d','d']],
+  run:[['r','r'],['u','ʌ'],['n','n']],
+  same:[['s','s'],['a','eɪ'],['me','m']],
+  say:[['s','s'],['ay','eɪ']],
+  school:[['sch','sk'],['ool','uːl']],
+  she:[['sh','ʃ'],['e','iː']],
+  should:[['sh','ʃ'],['oul','ʊ'],['d','d']],
+  sister:[['sis','sɪs'],['ter','tər']],
+  sound:[['s','s'],['ou','aʊ'],['nd','nd']],
+  speak:[['sp','sp'],['ea','iː'],['k','k']],
+  start:[['st','st'],['ar','ɑːr'],['t','t']],
+  stop:[['st','st'],['o','ɑː'],['p','p']],
+  study:[['stu','stʌ'],['dy','di']],
+  table:[['ta','teɪ'],['ble','bəl']],
+  take:[['t','t'],['a','eɪ'],['ke','k']],
+  teacher:[['tea','tiː'],['cher','tʃər']],
+  that:[['th','ð'],['a','æ'],['t','t']],
+  the:[['th','ð'],['e','ə']],
+  their:[['th','ð'],['eir','ɛər']],
+  them:[['th','ð'],['em','ɛm']],
+  then:[['th','ð'],['en','ɛn']],
+  there:[['th','ð'],['ere','ɛər']],
+  these:[['th','ð'],['ese','iːz']],
+  they:[['th','ð'],['ey','eɪ']],
+  thing:[['th','θ'],['ing','ɪŋ']],
+  think:[['th','θ'],['i','ɪ'],['nk','ŋk']],
+  this:[['th','ð'],['i','ɪ'],['s','z']],
+  those:[['th','ð'],['ose','oʊz']],
+  though:[['th','ð'],['ough','oʊ']],
+  three:[['thr','θr'],['ee','iː']],
+  through:[['thr','θr'],['ough','uː']],
+  time:[['t','t'],['i','aɪ'],['me','m']],
+  today:[['to','tə'],['day','deɪ']],
+  together:[['to','tə'],['geth','gɛð'],['er','ər']],
+  turn:[['t','t'],['ur','ɜː'],['n','n']],
+  under:[['un','ʌn'],['der','dər']],
+  university:[['u','juː'],['ni','nɪ'],['ver','vɜː'],['si','sɪ'],['ty','ti']],
+  very:[['v','v'],['er','ɛr'],['y','i']],
+  vine:[['v','v'],['i','aɪ'],['ne','n']],
+  voice:[['v','v'],['oi','ɔɪ'],['ce','s']],
+  want:[['w','w'],['an','ɑːn'],['t','t']],
+  water:[['wa','wɔː'],['ter','tər']],
+  weather:[['w','w'],['ea','ɛ'],['th','ð'],['er','ər']],
+  well:[['w','w'],['e','ɛ'],['ll','l']],
+  what:[['wh','w'],['a','ɑː'],['t','t']],
+  when:[['wh','w'],['en','ɛn']],
+  where:[['wh','w'],['ere','ɛər']],
+  which:[['wh','w'],['ich','ɪtʃ']],
+  who:[['wh','h'],['o','uː']],
+  why:[['wh','w'],['y','aɪ']],
+  will:[['w','w'],['i','ɪ'],['ll','l']],
+  wine:[['w','w'],['i','aɪ'],['ne','n']],
+  with:[['w','w'],['i','ɪ'],['th','θ']],
+  without:[['with','wɪð'],['out','aʊt']],
+  word:[['w','w'],['or','ɜː'],['d','d']],
+  world:[['w','w'],['or','ɜː'],['l','l'],['d','d']],
+  wow:[['w','w'],['ow','aʊ']],
+  write:[['wr','r'],['i','aɪ'],['te','t']],
+  year:[['y','j'],['ear','ɪər']],
+  you:[['y','j'],['ou','uː']],
+  your:[['y','j'],['our','ɔːr']],
+}
+
+function lookupWord(word) {
+  const w = word.toLowerCase().trim().replace(/[^a-z]/g, '')
+  const raw = WORD_IPA_RAW[w]
+  if (raw) {
+    return raw.map(([text, ipa]) => ({
+      text,
+      ipa,
+      tip: PHONEME_INFO[ipa]?.tip || `Âm /${ipa}/`,
+      isHard: PHONEME_INFO[ipa]?.hard || false,
+    }))
+  }
+  return g2p(w)
+}
+
+function g2p(word) {
+  const w = word.toLowerCase().replace(/[^a-z]/g, '')
+  if (!w) return [{ text: word, ipa: '?', tip: 'Không tìm thấy trong từ điển', isHard: false }]
+  const out = []
+  let i = 0
+  const voiced_th_words = new Set(['the','this','that','there','they','them','their','these','those','though','with','other','mother','father','brother','whether','weather','another','together','smooth','breathe'])
+  const isVoicedThWord = voiced_th_words.has(w)
+
+  while (i < w.length) {
+    const rest = w.slice(i)
+    const prev = i > 0 ? w[i - 1] : ''
+    const next = w[i + 1] || ''
+
+    let found = false
+    const try2 = (pat, ipa) => {
+      if (rest.startsWith(pat)) { out.push({ text: pat, ipa }); i += pat.length; found = true }
+    }
+
+    // Trigraphs
+    if (!found) try2('tch', 'tʃ')
+    if (!found) try2('dge', 'dʒ')
+    if (!found) try2('igh', 'aɪ')
+    if (!found) try2('ght', 't')
+    if (!found && rest.startsWith('tion')) { out.push({ text: 'tion', ipa: 'ʃən' }); i += 4; found = true }
+    if (!found && rest.startsWith('sion')) { out.push({ text: 'sion', ipa: 'ʒən' }); i += 4; found = true }
+    if (!found && rest.startsWith('ture')) { out.push({ text: 'ture', ipa: 'tʃər' }); i += 4; found = true }
+    // Digraphs
+    if (!found && rest.startsWith('th')) { out.push({ text: 'th', ipa: (isVoicedThWord || i > 0) ? 'ð' : 'θ' }); i += 2; found = true }
+    if (!found) try2('sh', 'ʃ')
+    if (!found) try2('ch', 'tʃ')
+    if (!found) try2('ph', 'f')
+    if (!found && rest.startsWith('wh')) { out.push({ text: 'wh', ipa: next === 'o' ? 'h' : 'w' }); i += 2; found = true }
+    if (!found) try2('ck', 'k')
+    if (!found && rest.startsWith('ng')) { out.push({ text: 'ng', ipa: 'aeiou'.includes(w[i + 2] || '') ? 'ŋg' : 'ŋ' }); i += 2; found = true }
+    if (!found) try2('qu', 'kw')
+    if (!found) try2('kn', 'n')
+    if (!found) try2('wr', 'r')
+    if (!found && rest.startsWith('mb') && i === w.length - 2) { out.push({ text: 'mb', ipa: 'm' }); i += 2; found = true }
+    // Vowel digraphs
+    if (!found) try2('ee', 'iː')
+    if (!found) try2('ea', 'iː')
+    if (!found) try2('ai', 'eɪ')
+    if (!found) try2('ay', 'eɪ')
+    if (!found) try2('oa', 'oʊ')
+    if (!found) try2('oi', 'ɔɪ')
+    if (!found) try2('oy', 'ɔɪ')
+    if (!found) try2('oo', 'uː')
+    if (!found) try2('ou', 'aʊ')
+    if (!found) try2('ow', 'aʊ')
+    if (!found) try2('ew', 'juː')
+    if (!found) try2('ue', 'uː')
+    if (!found) try2('au', 'ɔː')
+    if (!found) try2('aw', 'ɔː')
+    if (!found) try2('er', 'ər')
+    if (!found) try2('ir', 'ɜː')
+    if (!found) try2('ur', 'ɜː')
+    if (!found) try2('or', 'ɔːr')
+    if (!found) try2('ar', 'ɑːr')
+
+    if (!found) {
+      const c = w[i]
+      let ipa = c
+      if (c === 'a') ipa = 'æ'
+      else if (c === 'e') ipa = i === w.length - 1 ? null : 'ɛ'
+      else if (c === 'i') ipa = 'ɪ'
+      else if (c === 'o') ipa = 'ɑː'
+      else if (c === 'u') ipa = 'ʌ'
+      else if (c === 'y') ipa = i === 0 ? 'j' : 'i'
+      else if (c === 'c') ipa = 'eiy'.includes(next) ? 's' : 'k'
+      else if (c === 'g') ipa = 'eiy'.includes(next) ? 'dʒ' : 'g'
+      else if (c === 's') ipa = 'aeiou'.includes(prev) && 'aeiou'.includes(next) ? 'z' : 's'
+      else if (c === 'x') ipa = 'ks'
+      else if (c === 'z') ipa = 'z'
+      if (ipa !== null) out.push({ text: c, ipa })
+      i++
+    }
+  }
+
+  return out
+    .filter(p => p.ipa && p.ipa !== '∅')
+    .map(p => ({
+      ...p,
+      tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`,
+      isHard: PHONEME_INFO[p.ipa]?.hard || false,
+    }))
+}
+
+// Levenshtein alignment: returns, for each position in src, the matched dst element (or null)
+function levenshteinAlign(src, dst) {
+  const m = src.length, n = dst.length
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0))
+  for (let i = 0; i <= m; i++) dp[i][0] = i
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++) {
+      const cost = src[i - 1] === dst[j - 1] ? 0 : 1
+      dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + cost)
+    }
+  const align = new Array(m).fill(null)
+  let i = m, j = n
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && dp[i][j] === dp[i-1][j-1] + (src[i-1] === dst[j-1] ? 0 : 1)) {
+      align[i - 1] = dst[j - 1]; i--; j--
+    } else if (j > 0 && dp[i][j] === dp[i][j-1] + 1) {
+      j--
+    } else {
+      i--
+    }
+  }
+  return align
+}
+
+const PHONE_SIMILAR = {
+  'θ': ['s','f','t','d'], 'ð': ['d','z','v','ð'],
+  'r': ['l','w','ər'],    'l': ['r','n'],
+  'æ': ['ɛ','ʌ','ɑː'],   'ɪ': ['iː','ɛ'],
+  'ʌ': ['æ','ɑː','ə'],   'v': ['b','f','w'],
+  'w': ['v','b'],         'ʒ': ['ʃ','z'],
+  'ɜː':['ər','ɔː'],       'ʊ': ['uː','ʌ'],
+}
+function phoneSimilarity(a, b) {
+  if (a === b) return 1
+  if (PHONE_SIMILAR[a]?.includes(b) || PHONE_SIMILAR[b]?.includes(a)) return 0.25
+  return 0.05
+}
+
+function diagnoseFromSpeech(targetWord, spokenText, targetPhonemes) {
+  const target = targetWord.toLowerCase().trim()
+  const spoken = (spokenText || '').toLowerCase().replace(/[^a-z\s]/g, '').trim()
+
+  if (!spoken) {
+    return {
+      phonemes: targetPhonemes.map(p => ({ ...p, score: 0, note: 'Không nhận diện được' })),
+      overall: 0, spokenWord: null,
+    }
+  }
+
+  // Check if spoken contains or equals target
+  const firstSpokenWord = spoken.split(/\s+/)[0]
+  if (firstSpokenWord === target || spoken === target) {
+    const ph = targetPhonemes.map(p => ({ ...p, score: 85 + Math.floor(Math.random() * 15), note: null }))
+    return { phonemes: ph, overall: Math.round(ph.reduce((s, p) => s + p.score, 0) / ph.length), spokenWord: spoken }
+  }
+
+  // Find the closest word in spoken text to target
+  const candidates = spoken.split(/\s+/)
+  let bestWord = candidates[0]
+  let bestDist = Infinity
+  for (const cand of candidates) {
+    const d = levDist(cand, target)
+    if (d < bestDist) { bestDist = d; bestWord = cand }
+  }
+
+  const spokenPhonemes = lookupWord(bestWord)
+  const targetIPAs = targetPhonemes.map(p => p.ipa)
+  const spokenIPAs = spokenPhonemes.map(p => p.ipa)
+  const alignment = levenshteinAlign(targetIPAs, spokenIPAs)
+
+  const scored = targetPhonemes.map((p, idx) => {
+    const got = alignment[idx]
+    if (!got) return { ...p, score: 15, note: `Âm /${p.ipa}/ bị bỏ qua` }
+    if (got === p.ipa) return { ...p, score: 85 + Math.floor(Math.random() * 15), note: null }
+    const sim = phoneSimilarity(p.ipa, got)
+    return {
+      ...p, score: Math.round(sim * 80),
+      note: `Nghe như /${got}/ — cần /${p.ipa}/`,
+      spokenIpa: got,
+    }
+  })
+
+  const overall = Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
+  return { phonemes: scored, overall, spokenWord: bestWord }
+}
+
+function levDist(a, b) {
+  const m = a.length, n = b.length
+  const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i || j))
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
+  return dp[m][n]
 }
 
 // ─── COMPONENTS ────────────────────────────────────────────────────────────
@@ -686,6 +1148,7 @@ function HomeScreen({ onSelectTopic, xp, stars }) {
 function PracticeScreen({ topic, onBack, onXP, onStar }) {
   const [index, setIndex] = useState(0)
   const [phase, setPhase] = useState('ready') // ready | recording | result
+  const [micError, setMicError] = useState(null)
   const [results, setResults] = useState(null)
   const [overallScore, setOverallScore] = useState(0)
   const [recordedUrl, setRecordedUrl] = useState(null)
@@ -706,6 +1169,7 @@ function PracticeScreen({ topic, onBack, onXP, onStar }) {
 
   function reset() {
     setPhase('ready')
+    setMicError(null)
     setResults(null)
     setOverallScore(0)
     setRecordedUrl(null)
@@ -722,19 +1186,21 @@ function PracticeScreen({ topic, onBack, onXP, onStar }) {
   }
 
   async function startRecording() {
+    setMicError(null)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       chunksRef.current = []
-      const mr = new MediaRecorder(stream)
+      const mimeType = getSupportedMimeType()
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
       mediaRef.current = mr
-      mr.ondataavailable = e => chunksRef.current.push(e.data)
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       mr.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
         setRecordedUrl(URL.createObjectURL(blob))
         stream.getTracks().forEach(t => t.stop())
         processResults()
       }
-      mr.start()
+      mr.start(100) // collect chunks every 100ms
       setPhase('recording')
       setCountdown(3)
       let c = 3
@@ -743,11 +1209,12 @@ function PracticeScreen({ topic, onBack, onXP, onStar }) {
         setCountdown(c)
         if (c <= 0) {
           clearInterval(timerRef.current)
-          mr.stop()
+          if (mr.state !== 'inactive') mr.stop()
         }
       }, 1000)
-    } catch {
-      processResults()
+    } catch (err) {
+      const denied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError'
+      setMicError(denied ? 'Bạn cần cho phép truy cập microphone' : 'Không thể mở microphone')
     }
   }
 
@@ -828,6 +1295,13 @@ function PracticeScreen({ topic, onBack, onXP, onStar }) {
           <Volume2 size={18} />
           <span className="text-sm font-medium">Nghe phát âm mẫu</span>
         </button>
+
+        {/* Mic error */}
+        {micError && (
+          <div className="w-full mb-4 bg-red-500/10 border border-red-500/40 rounded-2xl px-4 py-3 fade-in">
+            <p className="text-red-400 text-sm text-center">⚠️ {micError}</p>
+          </div>
+        )}
 
         {/* Recorded audio */}
         {recordedUrl && (
@@ -950,101 +1424,194 @@ function DictionaryScreen({ onBack }) {
 }
 
 function DictionaryEntry({ word }) {
-  const [phase, setPhase] = useState('ready')
-  const [recordedUrl, setRecordedUrl] = useState(null)
-  const [countdown, setCountdown] = useState(3)
-  const [score, setScore] = useState(null)
-  const mediaRef = useRef(null)
-  const chunksRef = useRef([])
-  const timerRef = useRef(null)
+  const [phase, setPhase] = useState('ready') // ready | listening | result
+  const [micError, setMicError] = useState(null)
+  const [diagnosis, setDiagnosis] = useState(null)
+  const [selectedIdx, setSelectedIdx] = useState(null)
+  const recognitionRef = useRef(null)
+  const phonemes = lookupWord(word)
 
   useEffect(() => {
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort() } catch (_) {}
+    }
     setPhase('ready')
-    setRecordedUrl(null)
-    setScore(null)
+    setMicError(null)
+    setDiagnosis(null)
+    setSelectedIdx(null)
   }, [word])
 
-  async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      chunksRef.current = []
-      const mr = new MediaRecorder(stream)
-      mediaRef.current = mr
-      mr.ondataavailable = e => chunksRef.current.push(e.data)
-      mr.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        setRecordedUrl(URL.createObjectURL(blob))
-        stream.getTracks().forEach(t => t.stop())
-        const s = Math.floor(Math.random() * 40) + 55
-        setScore(s)
-        setPhase('result')
-        if (s >= 75) playSuccessSound(); else playFailSound()
-      }
-      mr.start()
-      setPhase('recording')
-      setCountdown(3)
-      let c = 3
-      timerRef.current = setInterval(() => {
-        c--
-        setCountdown(c)
-        if (c <= 0) { clearInterval(timerRef.current); mr.stop() }
-      }, 1000)
-    } catch {
-      const s = Math.floor(Math.random() * 40) + 55
-      setScore(s)
+  function startListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      setMicError('Trình duyệt không hỗ trợ nhận diện giọng nói. Dùng Chrome hoặc Edge.')
+      return
+    }
+    setMicError(null)
+    setDiagnosis(null)
+    setSelectedIdx(null)
+
+    const rec = new SR()
+    recognitionRef.current = rec
+    rec.lang = 'en-US'
+    rec.continuous = false
+    rec.interimResults = false
+    rec.maxAlternatives = 5
+
+    rec.onresult = (e) => {
+      // Try all alternatives, pick the one closest to target
+      const alts = Array.from(e.results[0]).map(r => r.transcript)
+      const target = word.toLowerCase()
+      const best = alts.reduce((a, b) => levDist(a.toLowerCase(), target) <= levDist(b.toLowerCase(), target) ? a : b)
+      const result = diagnoseFromSpeech(word, best, phonemes)
+      setDiagnosis(result)
       setPhase('result')
+      if (result.overall >= 75) playSuccessSound(); else playFailSound()
+    }
+
+    rec.onerror = (e) => {
+      setPhase('ready')
+      if (e.error === 'not-allowed') setMicError('Bạn cần cho phép truy cập microphone')
+      else if (e.error === 'no-speech') setMicError('Không nghe thấy — hãy nói to hơn và thử lại')
+      else if (e.error === 'network') setMicError('Lỗi mạng — cần internet để nhận diện giọng nói')
+      else setMicError(`Lỗi: ${e.error}`)
+    }
+
+    rec.onend = () => {
+      if (phase === 'listening') setPhase('ready')
+    }
+
+    try {
+      rec.start()
+      setPhase('listening')
+    } catch (err) {
+      setMicError('Không thể bắt đầu nhận diện giọng nói')
     }
   }
 
+  function stopListening() {
+    try { recognitionRef.current?.stop() } catch (_) {}
+    setPhase('ready')
+  }
+
+  const overall = diagnosis?.overall ?? null
+  const diagPhonemes = diagnosis?.phonemes ?? phonemes
+
   return (
     <div className="bg-white/5 border border-white/10 rounded-3xl p-5 fade-in">
+      {/* Word header */}
       <div className="flex items-start justify-between mb-4">
         <div>
           <div className="text-3xl font-bold text-white mb-1">{word}</div>
-          <div className="text-white/30 text-xs">Nhấn 🔊 để nghe phát âm chuẩn</div>
+          {diagnosis?.spokenWord && (
+            <div className="text-white/50 text-sm fade-in">
+              Đã nghe: <span className="text-blue-300 font-medium">"{diagnosis.spokenWord}"</span>
+            </div>
+          )}
         </div>
         <button
           onClick={() => speak(word)}
-          className="w-11 h-11 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center hover:bg-blue-600/30 transition-colors"
+          className="w-11 h-11 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center hover:bg-blue-600/30 transition-colors flex-shrink-0"
         >
           <Volume2 size={18} className="text-blue-400" />
         </button>
       </div>
 
-      {score !== null && (
-        <div className={`mb-4 p-3 rounded-2xl border ${scoreBg(score)} fade-in`}>
-          <div className={`text-2xl font-bold ${scoreColor(score)}`}>{score}%</div>
-          <div className={`text-sm ${scoreColor(score)}`}>{scoreLabel(score)}</div>
+      {/* Phoneme breakdown */}
+      <div className="mb-4">
+        <div className="text-white/40 text-xs uppercase tracking-wider mb-2">
+          {diagnosis ? 'Phân tích từng âm vị — nhấn để xem chi tiết' : 'Phân tích IPA'}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {diagPhonemes.map((p, idx) => {
+            const score = diagnosis ? p.score : null
+            const bg = score !== null ? scoreBg(score) : (p.isHard ? 'bg-orange-500/10 border-orange-500/30' : 'bg-white/5 border-white/10')
+            const textCol = score !== null ? scoreColor(score) : (p.isHard ? 'text-orange-300' : 'text-white/70')
+            return (
+              <button
+                key={idx}
+                onClick={() => diagnosis && setSelectedIdx(idx === selectedIdx ? null : idx)}
+                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-1 transition-all ${bg} ${diagnosis ? 'cursor-pointer hover:scale-105 active:scale-95' : 'cursor-default'}`}
+              >
+                <span className="text-white font-semibold text-sm">{p.text}</span>
+                <span className="text-white/40 font-mono text-xs">/{p.ipa}/</span>
+                {score !== null && (
+                  <span className={`text-xs font-bold ${textCol}`}>{score}%</span>
+                )}
+                {p.isHard && !diagnosis && (
+                  <span className="text-orange-400 text-xs">★</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Expanded phoneme detail */}
+      {selectedIdx !== null && diagPhonemes[selectedIdx] && (
+        <div className={`mb-4 rounded-2xl p-4 border fade-in ${scoreBg(diagPhonemes[selectedIdx].score)}`}>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-white font-bold text-lg">/{diagPhonemes[selectedIdx].ipa}/</span>
+            <span className={`text-xl font-bold ${scoreColor(diagPhonemes[selectedIdx].score)}`}>
+              {diagPhonemes[selectedIdx].score}%
+            </span>
+          </div>
+          {diagPhonemes[selectedIdx].note && (
+            <div className="text-red-300 text-sm mb-2 font-medium">⚠️ {diagPhonemes[selectedIdx].note}</div>
+          )}
+          <p className="text-white/80 text-sm leading-relaxed">{diagPhonemes[selectedIdx].tip}</p>
+          <button
+            onClick={() => speak(diagPhonemes[selectedIdx].text)}
+            className="mt-3 flex items-center gap-1.5 text-blue-400 text-xs hover:text-blue-300 transition-colors"
+          >
+            <Volume2 size={13} /> Nghe âm /{diagPhonemes[selectedIdx].ipa}/
+          </button>
         </div>
       )}
 
-      {recordedUrl && (
-        <div className="flex items-center gap-2 mb-4 bg-white/5 rounded-xl p-3">
-          <span className="text-white/40 text-xs">Bản ghi của bạn:</span>
-          <audio controls src={recordedUrl} className="h-6 flex-1" />
+      {/* Overall score */}
+      {overall !== null && (
+        <div className={`mb-4 p-3 rounded-2xl border flex items-center justify-between ${scoreBg(overall)} fade-in`}>
+          <div className={`text-sm font-medium ${scoreColor(overall)}`}>{scoreLabel(overall)}</div>
+          <div className={`text-2xl font-bold ${scoreColor(overall)}`}>{overall}%</div>
         </div>
       )}
 
-      {phase !== 'recording' && (
+      {/* Error */}
+      {micError && (
+        <div className="mb-4 bg-red-500/10 border border-red-500/40 rounded-xl p-3 fade-in">
+          <p className="text-red-400 text-sm">⚠️ {micError}</p>
+        </div>
+      )}
+
+      {/* Action button */}
+      {phase === 'listening' ? (
         <button
-          onClick={phase === 'result' ? () => { setPhase('ready'); setScore(null); setRecordedUrl(null) } : startRecording}
-          className="w-full bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-2xl py-3 flex items-center justify-center gap-2 font-semibold hover:opacity-90 transition-opacity"
+          onClick={stopListening}
+          className="w-full bg-red-600 text-white rounded-2xl py-3 flex items-center justify-center gap-3"
         >
-          <Mic size={18} />
-          <span>{phase === 'result' ? 'Thử lại' : 'Ghi âm & Chấm điểm'}</span>
-        </button>
-      )}
-
-      {phase === 'recording' && (
-        <div className="w-full bg-red-600 text-white rounded-2xl py-3 flex items-center justify-center gap-3">
           <div className="relative mic-pulse"><MicOff size={18} /></div>
           <div className="flex items-end gap-1 h-5">
             {[1,2,3,4,5].map(n => (
-              <div key={n} className={`wave-bar w-1 bg-white/80 rounded-full`} style={{ height: `${10 + n * 2}px` }} />
+              <div key={n} className="wave-bar w-1 bg-white/80 rounded-full" style={{ height: `${10 + n * 2}px` }} />
             ))}
           </div>
-          <span className="font-bold">{countdown}s</span>
-        </div>
+          <span className="font-semibold">Đang nghe... (nhấn dừng)</span>
+        </button>
+      ) : (
+        <button
+          onClick={phase === 'result' ? () => { setDiagnosis(null); setSelectedIdx(null); setPhase('ready') } : startListening}
+          className="w-full bg-gradient-to-r from-blue-600 to-violet-600 text-white rounded-2xl py-3 flex items-center justify-center gap-2 font-semibold hover:opacity-90 transition-opacity"
+        >
+          <Mic size={18} />
+          <span>{phase === 'result' ? 'Thử lại' : 'Nói & Phân tích phoneme'}</span>
+        </button>
+      )}
+
+      {phase === 'ready' && !diagnosis && (
+        <p className="text-center text-white/25 text-xs mt-3">
+          Dùng Chrome/Edge • Cần internet để nhận diện giọng nói
+        </p>
       )}
     </div>
   )
