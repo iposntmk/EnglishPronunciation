@@ -133,7 +133,7 @@ function greedyCTCDecode(lp, T, V) {
   return chars.join('').toLowerCase()
 }
 
-export async function scoreWord(audioBlob, phonemes) {
+async function scoreWordOffline(audioBlob, phonemes) {
   await ensureModelLoaded()
 
   const pcm = await decodeAudioTo16kHz(audioBlob)
@@ -206,4 +206,24 @@ export async function scoreWord(audioBlob, phonemes) {
   const spokenWord = greedyCTCDecode(lp, T, V)
   const overall = Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
   return { phonemes: scored, overall, spokenWord: spokenWord || phonemes.map(p => p.text).join('') }
+}
+
+export async function scoreWord(audioBlob, phonemes) {
+  const provider = localStorage.getItem('pronunciationProvider') || 'offline'
+
+  if (provider === 'openai') {
+    const apiKey = localStorage.getItem('openaiApiKey') || ''
+    if (!apiKey) throw new Error('Chưa cấu hình OpenAI API key. Vào Cài đặt để thêm.')
+    const { scoreWordOpenAI } = await import('./api-scorers.js')
+    return scoreWordOpenAI(audioBlob, phonemes, apiKey)
+  }
+
+  if (provider === 'google') {
+    const apiKey = localStorage.getItem('googleApiKey') || ''
+    if (!apiKey) throw new Error('Chưa cấu hình Google Cloud API key. Vào Cài đặt để thêm.')
+    const { scoreWordGoogleCloud } = await import('./api-scorers.js')
+    return scoreWordGoogleCloud(audioBlob, phonemes, apiKey)
+  }
+
+  return scoreWordOffline(audioBlob, phonemes)
 }

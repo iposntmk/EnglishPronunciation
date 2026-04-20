@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
+import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square, Settings } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
 import { ensureModelLoaded, isModelReady, scoreWord } from './scorer.js'
 
@@ -520,15 +520,18 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const [modelReady, setModelReady] = useState(isModelReady)
+  const provider = localStorage.getItem('pronunciationProvider') || 'offline'
+  const [modelReady, setModelReady] = useState(() => provider !== 'offline' || isModelReady())
   const [loadPct, setLoadPct] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
 
-  // Preload model when this screen opens
+  // Preload offline model when this screen opens (skipped for API providers)
   useEffect(() => {
+    const prov = localStorage.getItem('pronunciationProvider') || 'offline'
+    if (prov !== 'offline') { setModelReady(true); return }
     if (isModelReady()) { setModelReady(true); return }
     const totals = {}
     ensureModelLoaded(ev => {
@@ -995,6 +998,93 @@ function DictionaryScreen({ onBack }) {
   )
 }
 
+// ─── SETTINGS SCREEN ──────────────────────────────────────────────────────
+
+function SettingsScreen() {
+  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'offline')
+  const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openaiApiKey') || '')
+  const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('googleApiKey') || '')
+  const [saved, setSaved] = useState(false)
+
+  const save = () => {
+    localStorage.setItem('pronunciationProvider', provider)
+    localStorage.setItem('openaiApiKey', openaiKey.trim())
+    localStorage.setItem('googleApiKey', googleKey.trim())
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
+      <div className="px-4 pt-10 pb-6">
+        <h1 className="text-2xl font-bold text-white">Cài Đặt</h1>
+        <p className="text-white/40 text-sm">Chọn engine chấm điểm phát âm</p>
+      </div>
+
+      {/* Provider selection */}
+      <div className="px-4 mb-6">
+        <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Engine chấm điểm</div>
+        <div className="flex flex-col gap-2">
+          {[
+            { id: 'offline', label: 'Offline (Transformers.js)', desc: 'Chạy ngay trên trình duyệt, không cần internet. Tải model ~40MB lần đầu.' },
+            { id: 'openai', label: 'OpenAI Whisper API', desc: 'Chính xác cao hơn, cần API key và kết nối mạng.' },
+            { id: 'google', label: 'Google Cloud Speech API', desc: 'Chất lượng cao, cần API key và kết nối mạng.' },
+          ].map(opt => (
+            <button key={opt.id} onClick={() => setProvider(opt.id)}
+              className={`text-left rounded-2xl p-4 border transition-all ${provider === opt.id ? 'bg-blue-600/20 border-blue-500/50' : 'bg-white/5 border-white/10 hover:bg-white/8'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${provider === opt.id ? 'border-blue-400' : 'border-white/30'}`}>
+                  {provider === opt.id && <div className="w-2 h-2 bg-blue-400 rounded-full" />}
+                </div>
+                <div>
+                  <div className={`font-semibold text-sm ${provider === opt.id ? 'text-blue-300' : 'text-white/80'}`}>{opt.label}</div>
+                  <div className="text-white/40 text-xs mt-0.5">{opt.desc}</div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* API key inputs */}
+      {provider === 'openai' && (
+        <div className="px-4 mb-6">
+          <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">OpenAI API Key</div>
+          <input
+            type="password"
+            value={openaiKey}
+            onChange={e => setOpenaiKey(e.target.value)}
+            placeholder="sk-..."
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
+          />
+          <p className="text-white/30 text-xs mt-2">Lấy key tại platform.openai.com → API keys</p>
+        </div>
+      )}
+
+      {provider === 'google' && (
+        <div className="px-4 mb-6">
+          <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Google Cloud API Key</div>
+          <input
+            type="password"
+            value={googleKey}
+            onChange={e => setGoogleKey(e.target.value)}
+            placeholder="AIza..."
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
+          />
+          <p className="text-white/30 text-xs mt-2">Lấy key tại console.cloud.google.com → APIs &amp; Services → Credentials</p>
+        </div>
+      )}
+
+      <div className="px-4">
+        <button onClick={save}
+          className={`w-full rounded-2xl py-4 font-semibold text-base transition-all active:scale-95 ${saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+          {saved ? 'Đã lưu!' : 'Lưu cài đặt'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── BOTTOM NAV ───────────────────────────────────────────────────────────
 
 function BottomNav({ screen, onNavigate }) {
@@ -1003,6 +1093,7 @@ function BottomNav({ screen, onNavigate }) {
       {[
         { id: 'library', icon: Library, label: 'Sound Library' },
         { id: 'dictionary', icon: BookOpen, label: 'Từ Điển' },
+        { id: 'settings', icon: Settings, label: 'Cài Đặt' },
       ].map(({ id, icon: Icon, label }) => (
         <button key={id} onClick={() => onNavigate(id)}
           className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${screen === id ? 'text-white' : 'text-white/30 hover:text-white/60'}`}>
@@ -1039,7 +1130,10 @@ export default function App() {
       {screen === 'dictionary' && (
         <DictionaryScreen onBack={() => handleNavigate('library')} />
       )}
-      {(screen === 'library' || screen === 'dictionary') && (
+      {screen === 'settings' && (
+        <SettingsScreen />
+      )}
+      {(screen === 'library' || screen === 'dictionary' || screen === 'settings') && (
         <BottomNav screen={screen} onNavigate={handleNavigate} />
       )}
     </div>
