@@ -2,6 +2,32 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
 
+// ─── WHISPER (chạy offline trong browser, không cần internet) ─────────────
+let _whisperPipe = null
+let _whisperPromise = null
+
+function loadWhisper(onProgress) {
+  if (_whisperPipe) return Promise.resolve(_whisperPipe)
+  if (!_whisperPromise) {
+    _whisperPromise = import('@xenova/transformers')
+      .then(({ pipeline }) => pipeline(
+        'automatic-speech-recognition',
+        'Xenova/whisper-tiny.en',
+        { progress_callback: onProgress }
+      ))
+      .then(pipe => { _whisperPipe = pipe; return pipe })
+      .catch(err => { _whisperPromise = null; throw err })
+  }
+  return _whisperPromise
+}
+
+async function transcribeBlob(blob, onProgress) {
+  const pipe = await loadWhisper(onProgress)
+  const ab = await blob.arrayBuffer()
+  const out = await pipe(ab)
+  return out.text.toLowerCase().replace(/[^a-z\s']/g, '').trim()
+}
+
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
 const RACHEL_URLS = {
@@ -585,14 +611,6 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
-const SR_ERRORS = {
-  'not-allowed':   'Chưa cấp quyền microphone — vào Settings trình duyệt và bật Microphone cho trang này.',
-  'network':       'Lỗi mạng — Speech Recognition cần kết nối internet (gửi audio lên Google). Kiểm tra WiFi.',
-  'audio-capture': 'Không tìm thấy microphone trên thiết bị.',
-  'no-speech':     'Không nghe thấy giọng nói. Nói to hơn và thử lại.',
-  'aborted':       null,
-  'service-not-allowed': 'Trình duyệt chặn microphone. Dùng Chrome và mở qua HTTPS.',
-}
 
 function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const phonemes = lookupWord(word)
@@ -603,8 +621,9 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const [srStatus, setSrStatus] = useState('idle') // idle | pending | done | failed
-  const recogRef = useRef(null)
+  // whisper: idle | loading | transcribing | done | failed
+  const [whisperStatus, setWhisperStatus] = useState('idle')
+  const [modelProgress, setModelProgress] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
@@ -615,17 +634,18 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  const startRecording = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) { setErrorMsg('Trình duyệt không hỗ trợ. Dùng Chrome.'); return }
-    if (!navigator.onLine) { setErrorMsg('Cần kết nối internet — Chrome gửi audio lên Google để nhận diện. Kiểm tra WiFi.'); return }
+  // Bắt đầu load model Whisper ngầm khi component mount
+  useEffect(() => {
+    loadWhisper(() => {}).catch(() => {})
+  }, [])
 
+  const startRecording = useCallback(() => {
     setRecordingUrl(null)
     setErrorMsg(null)
-    setSrStatus('idle')
+    setWhisperStatus('idle')
+    setModelProgress(0)
     diagRef.current = null
 
-    // ── Bước 1: MediaRecorder (ghi âm lưu lại để nghe lại)
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
         streamRef.current = stream
@@ -634,84 +654,54 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         mrRef.current = mr
         const chunks = []
         mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-        mr.onstop = () => {
-          if (chunks.length > 0) {
-            const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
-            setRecordingUrl(URL.createObjectURL(blob))
-          }
+
+        mr.onstop = async () => {
           stream.getTracks().forEach(t => t.stop())
+          if (chunks.length === 0) {
+            setErrorMsg('Không ghi được âm thanh. Thử lại.')
+            setPhase('ready')
+            return
+          }
+          const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+          setRecordingUrl(URL.createObjectURL(blob))
+          setPhase('recorded')
+
+          // Transcribe bằng Whisper
+          setWhisperStatus(_whisperPipe ? 'transcribing' : 'loading')
+          try {
+            const transcript = await transcribeBlob(blob, (p) => {
+              if (p.status === 'progress' && p.progress != null) {
+                setModelProgress(Math.round(p.progress))
+                setWhisperStatus('loading')
+              }
+              if (p.status === 'ready') setWhisperStatus('transcribing')
+            })
+            setWhisperStatus('transcribing') // ensure status after load
+            diagRef.current = diagnoseFromSpeech(word, transcript, phonemes)
+            setWhisperStatus('done')
+          } catch (err) {
+            setWhisperStatus('failed')
+            setErrorMsg(`Whisper lỗi: ${err.message}`)
+          }
         }
+
         mr.start(100)
+        setPhase('recording')
+        timeoutRef.current = setTimeout(() => {
+          if (mrRef.current?.state === 'recording') mrRef.current.stop()
+        }, 5000)
       })
       .catch(err => {
         const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
         setErrorMsg(isDenied
           ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
-          : `Không truy cập được microphone: ${err.message}`)
+          : `Lỗi microphone: ${err.message}`)
       })
-
-    // ── Bước 2: SpeechRecognition (nhận diện giọng nói để chấm điểm)
-    const rec = new SR()
-    rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 5
-    recogRef.current = rec
-
-    let lastSrError = null
-
-    rec.onstart = () => {
-      setPhase('recording')
-      setSrStatus('pending')
-      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 5000)
-    }
-
-    rec.onresult = e => {
-      clearTimeout(timeoutRef.current)
-      const alts = Array.from(e.results[0]).map(r => r.transcript)
-      let best = alts[0], bestD = Infinity
-      for (const a of alts) {
-        const d = levDist(a.toLowerCase().trim(), word.toLowerCase())
-        if (d < bestD) { bestD = d; best = a }
-      }
-      diagRef.current = diagnoseFromSpeech(word, best, phonemes)
-    }
-
-    rec.onerror = e => {
-      clearTimeout(timeoutRef.current)
-      lastSrError = e.error
-      const msg = SR_ERRORS[e.error]
-      if (msg !== null) setErrorMsg(msg || `Lỗi nhận diện (${e.error})`)
-    }
-
-    // onend luôn chạy sau cùng — dừng MR rồi chuyển sang recorded
-    rec.onend = () => {
-      clearTimeout(timeoutRef.current)
-      if (mrRef.current?.state === 'recording' || mrRef.current?.state === 'paused') mrRef.current.stop()
-
-      if (!diagRef.current) {
-        // SR không nhận diện được — xác định nguyên nhân
-        let msg
-        if (lastSrError === 'network' || lastSrError === 'aborted') {
-          msg = `Nhận diện thất bại (${lastSrError}). Chrome cần internet để gửi audio lên Google. Kiểm tra WiFi.`
-        } else if (lastSrError === 'no-speech') {
-          msg = 'Không nghe thấy giọng nói. Nói to và rõ hơn.'
-        } else if (lastSrError) {
-          msg = `Lỗi: ${lastSrError}. Thử lại.`
-        } else {
-          msg = 'Không nhận diện được. Nói ngay sau khi nhấn nút, đủ to và rõ.'
-        }
-        setErrorMsg(prev => prev || msg)
-        setSrStatus('failed')
-      } else {
-        setSrStatus('done')
-      }
-      setPhase(prev => prev === 'recording' ? 'recorded' : prev)
-    }
-
-    rec.start()
   }, [word, phonemes])
 
   const stopRecording = () => {
     clearTimeout(timeoutRef.current)
-    try { recogRef.current?.stop() } catch (_) {}
+    if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
   const showResult = () => {
@@ -721,12 +711,12 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
   const reset = () => {
     clearTimeout(timeoutRef.current)
-    recogRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     diagRef.current = null
     setPhase('ready'); setResult(null); setSelectedIdx(null)
-    setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null); setSrStatus('idle')
+    setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null)
+    setWhisperStatus('idle'); setModelProgress(0)
   }
 
   const playbackRecording = () => {
@@ -740,6 +730,15 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   }
 
   const sel = selectedIdx !== null && result ? result.phonemes[selectedIdx] : null
+
+  // Label cho nút Xem kết quả
+  const scoreButtonLabel = () => {
+    if (whisperStatus === 'done') return 'Xem kết quả'
+    if (whisperStatus === 'failed') return 'Nhận diện thất bại'
+    if (whisperStatus === 'loading') return `Tải model... ${modelProgress}%`
+    if (whisperStatus === 'transcribing') return 'Đang nhận diện...'
+    return 'Đang xử lý...'
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -815,7 +814,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </div>
         )}
 
-        {/* Bước 1: ready — nhấn để bắt đầu */}
+        {/* Bước 1: ready */}
         {phase === 'ready' && (
           <button onClick={startRecording} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
             <Mic size={24} />
@@ -823,7 +822,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </button>
         )}
 
-        {/* Bước 2: recording — đang ghi, nhấn để dừng sớm */}
+        {/* Bước 2: recording */}
         {phase === 'recording' && (
           <button onClick={stopRecording} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
@@ -831,7 +830,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </button>
         )}
 
-        {/* Bước 3: recorded — nghe lại + xem kết quả */}
+        {/* Bước 3: recorded — nghe lại + chờ Whisper */}
         {phase === 'recorded' && (
           <>
             {recordingUrl && (
@@ -841,9 +840,15 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
                 {isPlayingBack ? 'Dừng' : 'Nghe lại bản ghi'}
               </button>
             )}
-            <button onClick={showResult} disabled={srStatus !== 'done'}
-              className={`w-full rounded-2xl py-4 flex items-center justify-center gap-2 text-lg font-semibold transition-all ${srStatus === 'done' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white active:scale-95' : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'}`}>
-              {srStatus === 'done' ? 'Xem kết quả' : srStatus === 'failed' ? 'Nhận diện thất bại' : '⏳ Đang nhận diện...'}
+            {/* Progress bar khi đang tải model */}
+            {whisperStatus === 'loading' && (
+              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-400 rounded-full transition-all duration-300" style={{ width: `${modelProgress}%` }} />
+              </div>
+            )}
+            <button onClick={showResult} disabled={whisperStatus !== 'done'}
+              className={`w-full rounded-2xl py-4 flex items-center justify-center gap-2 text-base font-semibold transition-all ${whisperStatus === 'done' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white active:scale-95' : 'bg-white/5 border border-white/10 text-white/40 cursor-not-allowed'}`}>
+              {scoreButtonLabel()}
             </button>
             <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
               <RotateCcw size={18} />
@@ -852,7 +857,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </>
         )}
 
-        {/* Bước 4: result — xem điểm, nghe lại, thử lại */}
+        {/* Bước 4: result */}
         {phase === 'result' && (
           <>
             <div className="flex gap-2">
@@ -875,7 +880,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </>
         )}
 
-        {/* Nghe mẫu luôn hiện ở ready/recording */}
+        {/* Nghe mẫu ở ready/recording */}
         {(phase === 'ready' || phase === 'recording') && (
           <button onClick={() => speak(word)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
             <Volume2 size={18} />
