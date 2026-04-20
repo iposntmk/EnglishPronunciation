@@ -520,8 +520,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const provider = localStorage.getItem('pronunciationProvider') || 'whisper-local'
-  const isLocalProvider = provider === 'whisper-local' || provider === 'offline'
+  const provider = localStorage.getItem('pronunciationProvider') || 'web-speech'
+  const needsModelLoad = provider === 'whisper-local' || provider === 'offline'
   const [modelReady, setModelReady] = useState(() => {
     if (provider === 'whisper-local') return isWhisperReady()
     if (provider === 'offline') return isModelReady()
@@ -530,14 +530,14 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [loadPct, setLoadPct] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
+  const speechRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
 
   useEffect(() => {
-    if (!isLocalProvider) { setModelReady(true); return }
+    if (!needsModelLoad) { setModelReady(true); return }
     if (provider === 'whisper-local' && isWhisperReady()) { setModelReady(true); return }
     if (provider === 'offline' && isModelReady()) { setModelReady(true); return }
-
     const totals = {}
     const onProgress = ev => {
       if (ev.status === 'progress') {
@@ -548,11 +548,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       }
       if (ev.status === 'ready') setModelReady(true)
     }
-
-    const loader = provider === 'whisper-local'
-      ? ensureWhisperLoaded(onProgress)
-      : ensureModelLoaded(onProgress)
-
+    const loader = provider === 'whisper-local' ? ensureWhisperLoaded(onProgress) : ensureModelLoaded(onProgress)
     loader.then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
   }, [])
 
@@ -560,10 +556,78 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  const startRecording = useCallback(() => {
-    setRecordingUrl(null)
-    setErrorMsg(null)
+  // ── Web Speech API path ──────────────────────────────────────────────────
+  const startWebSpeech = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      setErrorMsg('Trình duyệt không hỗ trợ Web Speech API. Dùng Chrome hoặc Edge.')
+      return
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      streamRef.current = stream
+      const mimeType = getSupportedMimeType()
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
+      mrRef.current = mr
+      const chunks = []
+      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
+      mr.onstop = () => {
+        stream.getTracks().forEach(t => t.stop())
+        if (chunks.length > 0) {
+          const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+          setRecordingUrl(URL.createObjectURL(blob))
+        }
+      }
+      mr.start(100)
 
+      const recognition = new SR()
+      recognition.lang = 'en-US'
+      recognition.continuous = false
+      recognition.interimResults = false
+      recognition.maxAlternatives = 1
+      speechRef.current = recognition
+
+      recognition.onresult = ev => {
+        clearTimeout(timeoutRef.current)
+        if (mrRef.current?.state === 'recording') mrRef.current.stop()
+        const transcript = (ev.results[0][0].transcript || '').trim().toLowerCase().replace(/[.,!?'"]/g, '')
+        const confidence = ev.results[0][0].confidence || 0.8
+        const spokenWord = transcript.split(/\s+/)[0] || transcript
+        const targetWord = phonemes.map(p => p.text).join('').toLowerCase()
+        const wordMatch = spokenWord === targetWord || transcript.includes(targetWord)
+        const baseScore = Math.round(confidence * 100)
+        const overall = wordMatch ? baseScore : Math.max(0, baseScore - 25)
+        const scored = phonemes.map(p => ({
+          ...p, score: overall,
+          note: !wordMatch && overall < 70 ? `Nghe như "${spokenWord}"` : null,
+        }))
+        setResult({ phonemes: scored, overall, spokenWord })
+        setPhase('result')
+      }
+      recognition.onerror = ev => {
+        clearTimeout(timeoutRef.current)
+        if (mrRef.current?.state === 'recording') mrRef.current.stop()
+        if (ev.error === 'no-speech') setErrorMsg('Không nghe thấy giọng nói. Thử nói to hơn.')
+        else if (ev.error === 'not-allowed') setErrorMsg('Chưa cấp quyền microphone.')
+        else setErrorMsg(`Lỗi nhận dạng: ${ev.error}`)
+        setPhase('ready')
+      }
+      recognition.onend = () => {
+        if (mrRef.current?.state === 'recording') mrRef.current.stop()
+      }
+
+      recognition.start()
+      setPhase('recording')
+      timeoutRef.current = setTimeout(() => recognition.stop(), 5000)
+    }).catch(err => {
+      const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
+      setErrorMsg(isDenied
+        ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
+        : `Lỗi microphone: ${err.message}`)
+    })
+  }, [phonemes])
+
+  // ── Blob-based path (offline / API) ──────────────────────────────────────
+  const startBlobRecording = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
         streamRef.current = stream
@@ -572,27 +636,19 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         mrRef.current = mr
         const chunks = []
         mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-
         mr.onstop = async () => {
           stream.getTracks().forEach(t => t.stop())
-          if (chunks.length === 0) {
-            setErrorMsg('Không ghi được âm thanh. Thử lại.')
-            setPhase('ready')
-            return
-          }
+          if (chunks.length === 0) { setErrorMsg('Không ghi được âm thanh. Thử lại.'); setPhase('ready'); return }
           const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
           setRecordingUrl(URL.createObjectURL(blob))
           setPhase('scoring')
           try {
             const data = await scoreWord(blob, phonemes)
-            setResult(data)
-            setPhase('result')
+            setResult(data); setPhase('result')
           } catch (err) {
-            setErrorMsg(`Lỗi chấm điểm: ${err.message}`)
-            setPhase('ready')
+            setErrorMsg(`Lỗi chấm điểm: ${err.message}`); setPhase('ready')
           }
         }
-
         mr.start(100)
         setPhase('recording')
         timeoutRef.current = setTimeout(() => {
@@ -605,15 +661,24 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
           : `Lỗi microphone: ${err.message}`)
       })
-  }, [word, phonemes])
+  }, [phonemes])
+
+  const startRecording = useCallback(() => {
+    setRecordingUrl(null)
+    setErrorMsg(null)
+    if (provider === 'web-speech') { startWebSpeech(); return }
+    startBlobRecording()
+  }, [provider, startWebSpeech, startBlobRecording])
 
   const stopRecording = () => {
     clearTimeout(timeoutRef.current)
+    if (provider === 'web-speech') { speechRef.current?.stop(); return }
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
   const reset = () => {
     clearTimeout(timeoutRef.current)
+    speechRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     setPhase('ready'); setResult(null); setSelectedIdx(null)
@@ -711,7 +776,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           <div className="w-full rounded-2xl py-3 px-4 bg-white/5 border border-white/10 text-white/60 text-sm">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-              {provider === 'whisper-local' ? `Đang tải Whisper (${loadPct}%)...` : `Đang tải mô hình AI (${loadPct}%)...`}
+              {provider === 'whisper-local' ? `Đang tải Whisper (~75MB) — ${loadPct}%...` : `Đang tải mô hình AI — ${loadPct}%...`}
             </div>
             <div className="w-full bg-white/10 rounded-full h-1.5">
               <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${loadPct}%` }} />
@@ -1013,32 +1078,39 @@ function DictionaryScreen({ onBack }) {
 
 const PROVIDERS = [
   {
-    id: 'whisper-local',
-    label: 'Whisper trong trình duyệt',
+    id: 'web-speech',
+    label: 'Web Speech API',
     badge: 'KHÔNG CẦN KEY',
     badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    desc: 'Whisper tiny chạy offline ngay trên trình duyệt. Tải ~75MB lần đầu, không cần internet.',
+    desc: 'Dùng engine nhận dạng có sẵn của Chrome/Safari/Edge. Không cần tải gì, không cần tài khoản.',
   },
   {
     id: 'offline',
     label: 'Offline CTC (wav2vec2)',
     badge: 'KHÔNG CẦN KEY',
     badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    desc: 'Chấm điểm từng âm vị chi tiết hơn. Tải ~40MB lần đầu.',
+    desc: 'Chấm điểm từng âm vị chi tiết. Tải ~40MB lần đầu, hoạt động offline.',
+  },
+  {
+    id: 'whisper-local',
+    label: 'Whisper trong trình duyệt',
+    badge: 'KHÔNG CẦN KEY',
+    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    desc: 'Whisper tiny chạy offline. Tải ~75MB lần đầu. Yêu cầu trình duyệt mới.',
   },
   {
     id: 'azure',
     label: 'Azure Pronunciation Assessment',
     badge: 'TỐT NHẤT',
     badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    desc: 'Per-phoneme scoring chính xác nhất. Miễn phí 5 giờ/tháng, cần tạo tài khoản.',
+    desc: 'Chấm điểm từng âm vị chính xác nhất. Miễn phí 5 giờ/tháng, cần tạo tài khoản.',
   },
   {
     id: 'groq',
     label: 'Groq Whisper',
     badge: 'FREE ACCOUNT',
     badgeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    desc: 'Whisper large-v3 — nhanh, chính xác cao. Cần tạo tài khoản miễn phí tại groq.com.',
+    desc: 'Whisper large-v3 qua Groq API. Cần tạo tài khoản miễn phí tại groq.com.',
   },
   {
     id: 'google',
@@ -1073,7 +1145,7 @@ function KeyField({ label, value, onChange, placeholder, hint }) {
 }
 
 function SettingsScreen() {
-  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'whisper-local')
+  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'web-speech')
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openaiApiKey') || '')
   const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groqApiKey') || '')
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('googleApiKey') || '')
