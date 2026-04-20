@@ -596,43 +596,36 @@ const SR_ERRORS = {
 
 function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const phonemes = lookupWord(word)
-  // phases: ready → listening → recorded → result
+  // phases: ready → recording → recorded → result
   const [phase, setPhase] = useState('ready')
   const [errorMsg, setErrorMsg] = useState(null)
   const [result, setResult] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
+  const [srStatus, setSrStatus] = useState('idle') // idle | pending | done | failed
   const recogRef = useRef(null)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
-  const pendingDiagRef = useRef(null)
+  const diagRef = useRef(null)
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  const startListening = useCallback(() => {
+  const startRecording = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) { setErrorMsg('Trình duyệt không hỗ trợ. Dùng Chrome.'); return }
-    if (!navigator.onLine) { setErrorMsg('Cần kết nối internet — Speech Recognition gửi audio lên Google. Kiểm tra WiFi.'); return }
+    if (!navigator.onLine) { setErrorMsg('Cần kết nối internet — Chrome gửi audio lên Google để nhận diện. Kiểm tra WiFi.'); return }
 
     setRecordingUrl(null)
     setErrorMsg(null)
-    pendingDiagRef.current = null
+    setSrStatus('idle')
+    diagRef.current = null
 
-    const rec = new SR()
-    rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 5
-    recogRef.current = rec
-
-    const stopMR = () => { if (mrRef.current?.state === 'recording' || mrRef.current?.state === 'paused') mrRef.current.stop() }
-    const clearTO = () => clearTimeout(timeoutRef.current)
-
-    let lastSrError = null
-
-    // MediaRecorder runs independently — mic permission failure won't block SR
+    // ── Bước 1: MediaRecorder (ghi âm lưu lại để nghe lại)
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
         streamRef.current = stream
@@ -652,63 +645,77 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       })
       .catch(err => {
         const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
-        if (isDenied) setErrorMsg('Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.')
-        else setErrorMsg(`Không truy cập được microphone: ${err.message}`)
+        setErrorMsg(isDenied
+          ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
+          : `Không truy cập được microphone: ${err.message}`)
       })
 
+    // ── Bước 2: SpeechRecognition (nhận diện giọng nói để chấm điểm)
+    const rec = new SR()
+    rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 5
+    recogRef.current = rec
+
+    let lastSrError = null
+
     rec.onstart = () => {
-      setPhase('listening')
-      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 6000)
+      setPhase('recording')
+      setSrStatus('pending')
+      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 5000)
     }
 
     rec.onresult = e => {
-      clearTO()
+      clearTimeout(timeoutRef.current)
       const alts = Array.from(e.results[0]).map(r => r.transcript)
       let best = alts[0], bestD = Infinity
-      for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
-      pendingDiagRef.current = diagnoseFromSpeech(word, best, phonemes)
+      for (const a of alts) {
+        const d = levDist(a.toLowerCase().trim(), word.toLowerCase())
+        if (d < bestD) { bestD = d; best = a }
+      }
+      diagRef.current = diagnoseFromSpeech(word, best, phonemes)
     }
 
     rec.onerror = e => {
-      clearTO()
+      clearTimeout(timeoutRef.current)
       lastSrError = e.error
       const msg = SR_ERRORS[e.error]
       if (msg !== null) setErrorMsg(msg || `Lỗi nhận diện (${e.error})`)
     }
 
+    // onend luôn chạy sau cùng — dừng MR rồi chuyển sang recorded
     rec.onend = () => {
-      clearTO()
-      stopMR()
-      if (!pendingDiagRef.current) {
-        // Build targeted message from the actual error code
+      clearTimeout(timeoutRef.current)
+      if (mrRef.current?.state === 'recording' || mrRef.current?.state === 'paused') mrRef.current.stop()
+
+      if (!diagRef.current) {
+        // SR không nhận diện được — xác định nguyên nhân
         let msg
         if (lastSrError === 'network' || lastSrError === 'aborted') {
-          msg = `Nhận diện thất bại (${lastSrError}). Speech Recognition cần internet — Chrome gửi audio lên Google. Kiểm tra WiFi và thử lại.`
+          msg = `Nhận diện thất bại (${lastSrError}). Chrome cần internet để gửi audio lên Google. Kiểm tra WiFi.`
         } else if (lastSrError === 'no-speech') {
-          msg = 'Không nghe thấy giọng nói. Nói to và rõ hơn, rồi thử lại.'
+          msg = 'Không nghe thấy giọng nói. Nói to và rõ hơn.'
         } else if (lastSrError) {
-          msg = `Lỗi nhận diện: ${lastSrError}. Thử lại hoặc reload trang.`
+          msg = `Lỗi: ${lastSrError}. Thử lại.`
         } else {
           msg = 'Không nhận diện được. Nói ngay sau khi nhấn nút, đủ to và rõ.'
         }
         setErrorMsg(prev => prev || msg)
-        setPhase('ready')
-        return
+        setSrStatus('failed')
+      } else {
+        setSrStatus('done')
       }
-      setResult(pendingDiagRef.current)
-      setPhase(prev => prev === 'listening' ? 'result' : prev)
+      setPhase(prev => prev === 'recording' ? 'recorded' : prev)
     }
 
     rec.start()
   }, [word, phonemes])
 
-  const stopListening = () => {
+  const stopRecording = () => {
     clearTimeout(timeoutRef.current)
     try { recogRef.current?.stop() } catch (_) {}
   }
 
-  const showScore = () => {
-    setResult(pendingDiagRef.current)
+  const showResult = () => {
+    setResult(diagRef.current)
     setPhase('result')
   }
 
@@ -717,13 +724,16 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     recogRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
-    pendingDiagRef.current = null
-    setPhase('ready'); setResult(null); setSelectedIdx(null); setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null)
+    diagRef.current = null
+    setPhase('ready'); setResult(null); setSelectedIdx(null)
+    setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null); setSrStatus('idle')
   }
 
   const playbackRecording = () => {
     if (!recordingUrl || !audioRef.current) return
-    if (isPlayingBack) { audioRef.current.pause(); audioRef.current.currentTime = 0; setIsPlayingBack(false); return }
+    if (isPlayingBack) {
+      audioRef.current.pause(); audioRef.current.currentTime = 0; setIsPlayingBack(false); return
+    }
     audioRef.current.src = recordingUrl
     audioRef.current.onended = () => setIsPlayingBack(false)
     audioRef.current.play().then(() => setIsPlayingBack(true)).catch(() => setIsPlayingBack(false))
@@ -734,7 +744,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   return (
     <div className="flex flex-col h-full">
       <audio ref={audioRef} className="hidden" />
-      {/* Word header */}
+
+      {/* Tiêu đề từ + IPA breakdown */}
       <div className="text-center py-6 px-4">
         <div className="text-5xl mb-2">{emoji}</div>
         <button onClick={() => speak(word)} className="text-3xl font-bold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto">
@@ -742,12 +753,11 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           <Volume2 size={22} className="text-white/40" />
         </button>
         <div className="text-white/50 text-sm mt-1">{meaning}</div>
-        {/* IPA breakdown */}
+
         <div className="flex flex-wrap justify-center gap-2 mt-4">
           {phonemes.map((p, idx) => {
             const r = result?.phonemes[idx]
-            const recognised = result?.spokenWord !== null
-            const hasScore = r && recognised
+            const hasScore = r && result?.spokenWord !== null
             const bg = hasScore ? scoreBg(r.score) : 'bg-white/5 border-white/10'
             const tc = hasScore ? scoreColor(r.score) : 'text-white/60'
             return (
@@ -763,7 +773,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
             )
           })}
         </div>
-        {/* Phoneme detail */}
+
         {sel && (
           <div className={`mt-3 mx-4 rounded-2xl p-3 border text-left ${scoreBg(sel.score)}`}>
             <div className="flex items-center justify-between mb-1">
@@ -776,7 +786,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         )}
       </div>
 
-      {/* Overall result */}
+      {/* Kết quả tổng */}
       {result && (
         <div className="mx-4 mb-4 rounded-2xl bg-white/5 border border-white/10 p-4">
           <div className="flex items-center justify-between mb-2">
@@ -785,7 +795,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </div>
           <div className="flex items-center gap-3">
             <div className="flex-1 h-3 bg-white/10 rounded-full overflow-hidden">
-              <div className={`h-full rounded-full transition-all duration-700 ${result.overall >= 85 ? 'bg-emerald-400' : result.overall >= 65 ? 'bg-yellow-400' : 'bg-red-400'}`} style={{ width: `${result.overall}%` }} />
+              <div className={`h-full rounded-full transition-all duration-700 ${result.overall >= 85 ? 'bg-emerald-400' : result.overall >= 65 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                style={{ width: `${result.overall}%` }} />
             </div>
             <span className={`font-bold text-lg ${scoreColor(result.overall)}`}>{result.overall}%</span>
           </div>
@@ -794,10 +805,9 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         </div>
       )}
 
-      {/* Controls */}
+      {/* Nút điều khiển */}
       <div className="px-4 pb-6 mt-auto flex flex-col gap-3">
 
-        {/* Error message */}
         {errorMsg && (
           <div className="bg-red-500/15 border border-red-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
             <span className="text-red-400 text-lg mt-0.5">⚠️</span>
@@ -805,28 +815,50 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </div>
         )}
 
-        {/* Phase: ready */}
+        {/* Bước 1: ready — nhấn để bắt đầu */}
         {phase === 'ready' && (
-          <button onClick={startListening} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
+          <button onClick={startRecording} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
             <Mic size={24} />
-            {result ? 'Thử lại' : 'Bắt đầu ghi âm'}
+            Bắt đầu ghi âm
           </button>
         )}
 
-        {/* Phase: listening */}
-        {phase === 'listening' && (
-          <button onClick={stopListening} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
+        {/* Bước 2: recording — đang ghi, nhấn để dừng sớm */}
+        {phase === 'recording' && (
+          <button onClick={stopRecording} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-            <span className="font-semibold">Đang nghe... nhấn để dừng</span>
+            <span className="font-semibold">Đang ghi âm... nhấn để dừng</span>
           </button>
         )}
 
-        {/* Phase: result */}
+        {/* Bước 3: recorded — nghe lại + xem kết quả */}
+        {phase === 'recorded' && (
+          <>
+            {recordingUrl && (
+              <button onClick={playbackRecording}
+                className={`w-full rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+                {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
+                {isPlayingBack ? 'Dừng' : 'Nghe lại bản ghi'}
+              </button>
+            )}
+            <button onClick={showResult} disabled={srStatus !== 'done'}
+              className={`w-full rounded-2xl py-4 flex items-center justify-center gap-2 text-lg font-semibold transition-all ${srStatus === 'done' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white active:scale-95' : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'}`}>
+              {srStatus === 'done' ? 'Xem kết quả' : srStatus === 'failed' ? 'Nhận diện thất bại' : '⏳ Đang nhận diện...'}
+            </button>
+            <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+              <RotateCcw size={18} />
+              Thử lại
+            </button>
+          </>
+        )}
+
+        {/* Bước 4: result — xem điểm, nghe lại, thử lại */}
         {phase === 'result' && (
           <>
             <div className="flex gap-2">
               {recordingUrl && (
-                <button onClick={playbackRecording} className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+                <button onClick={playbackRecording}
+                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
                   {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
                   {isPlayingBack ? 'Dừng' : 'Nghe lại'}
                 </button>
@@ -836,15 +868,15 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
                 Nghe mẫu
               </button>
             </div>
-            <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
               <RotateCcw size={18} />
               Thử lại
             </button>
           </>
         )}
 
-        {/* Always show "Nghe mẫu" in ready/listening */}
-        {(phase === 'ready' || phase === 'listening') && (
+        {/* Nghe mẫu luôn hiện ở ready/recording */}
+        {(phase === 'ready' || phase === 'recording') && (
           <button onClick={() => speak(word)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
             <Volume2 size={18} />
             Nghe mẫu
