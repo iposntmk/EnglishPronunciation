@@ -544,6 +544,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
+  const timeoutRef = useRef(null)
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
@@ -574,21 +575,29 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       mr.start(100)
     }).catch(() => {})
 
-    rec.onstart = () => setPhase('listening')
+    const stopMR = () => { if (mrRef.current?.state !== 'inactive') mrRef.current?.stop() }
+    const clearTO = () => { clearTimeout(timeoutRef.current) }
+
+    rec.onstart = () => {
+      setPhase('listening')
+      // Auto-stop after 6s if nothing detected
+      timeoutRef.current = setTimeout(() => { try { rec.stop() } catch (_) {} }, 6000)
+    }
     rec.onresult = e => {
-      if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
+      clearTO(); stopMR()
       const alts = Array.from(e.results[0]).map(r => r.transcript)
       let best = alts[0], bestD = Infinity
       for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
       const diag = diagnoseFromSpeech(word, best, phonemes)
       setResult(diag); setPhase('result')
     }
-    rec.onerror = e => { console.warn('SR error', e.error); if (mrRef.current?.state !== 'inactive') mrRef.current?.stop(); setPhase('ready') }
-    rec.onend = () => { if (mrRef.current?.state !== 'inactive') mrRef.current?.stop() }
+    rec.onerror = e => { clearTO(); stopMR(); console.warn('SR error', e.error); setPhase('ready') }
+    rec.onend = () => { clearTO(); stopMR(); setPhase(prev => prev === 'listening' ? 'ready' : prev) }
     rec.start()
   }, [word, phonemes])
 
   const reset = () => {
+    clearTimeout(timeoutRef.current)
     recogRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
