@@ -9,8 +9,17 @@ async function scorePronunciation(blob, word, targetIpaList) {
   form.append('audio', new File([blob], 'rec.webm', { type: blob.type }))
   form.append('word', word)
   form.append('target_ipa', JSON.stringify(targetIpaList))
-  const res = await fetch('/api/score', { method: 'POST', body: form })
+  let res
+  try {
+    res = await fetch('/api/score', { method: 'POST', body: form })
+  } catch {
+    throw new Error('Không kết nối được backend — hãy chạy: cd backend && uvicorn main:app --port 8000')
+  }
   if (!res.ok) {
+    const ct = res.headers.get('content-type') || ''
+    if (ct.includes('text/html')) {
+      throw new Error('Backend chưa chạy — mở terminal và chạy: cd backend && uvicorn main:app --port 8000')
+    }
     const msg = await res.text().catch(() => `HTTP ${res.status}`)
     throw new Error(msg)
   }
