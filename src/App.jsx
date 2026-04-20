@@ -535,6 +535,7 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 
 function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const phonemes = lookupWord(word)
+  // phases: ready → listening → recorded → result
   const [phase, setPhase] = useState('ready')
   const [result, setResult] = useState(null)
   const [selectedIdx, setSelectedIdx] = useState(null)
@@ -545,6 +546,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
+  const pendingDiagRef = useRef(null)
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
@@ -588,11 +590,12 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       const alts = Array.from(e.results[0]).map(r => r.transcript)
       let best = alts[0], bestD = Infinity
       for (const a of alts) { const d = levDist(a.toLowerCase().trim(), word.toLowerCase()); if (d < bestD) { bestD = d; best = a } }
-      const diag = diagnoseFromSpeech(word, best, phonemes)
-      setResult(diag); setPhase('result')
+      pendingDiagRef.current = diagnoseFromSpeech(word, best, phonemes)
+      setPhase('recorded')
     }
     rec.onerror = e => { clearTO(); stopMR(); console.warn('SR error', e.error); setPhase('ready') }
     rec.onend = () => { clearTO(); stopMR(); setPhase(prev => prev === 'listening' ? 'ready' : prev) }
+    // stopListening triggers onend which resets to ready; if user manually stopped with no speech, that's fine
     rec.start()
   }, [word, phonemes])
 
@@ -601,11 +604,17 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     try { recogRef.current?.stop() } catch (_) {}
   }
 
+  const showScore = () => {
+    setResult(pendingDiagRef.current)
+    setPhase('result')
+  }
+
   const reset = () => {
     clearTimeout(timeoutRef.current)
     recogRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
+    pendingDiagRef.current = null
     setPhase('ready'); setResult(null); setSelectedIdx(null); setRecordingUrl(null); setIsPlayingBack(false)
   }
 
@@ -682,36 +691,73 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
       {/* Controls */}
       <div className="px-4 pb-6 mt-auto flex flex-col gap-3">
+
+        {/* Phase: ready */}
         {phase === 'ready' && (
           <button onClick={startListening} className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
             <Mic size={24} />
             {result ? 'Thử lại' : 'Bắt đầu ghi âm'}
           </button>
         )}
+
+        {/* Phase: listening */}
         {phase === 'listening' && (
           <button onClick={stopListening} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
             <span className="font-semibold">Đang nghe... nhấn để dừng</span>
           </button>
         )}
-        {result && (
-          <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
-            <RotateCcw size={18} />
-            Làm lại
-          </button>
+
+        {/* Phase: recorded — playback first, then score */}
+        {phase === 'recorded' && (
+          <>
+            <div className="text-center text-white/50 text-sm">Đã ghi xong! Nghe lại trước khi chấm điểm</div>
+            {recordingUrl ? (
+              <button onClick={playbackRecording} className={`w-full rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-500/20 border-green-500/40 text-green-300'}`}>
+                {isPlayingBack ? <Square size={22} /> : <Play size={22} />}
+                {isPlayingBack ? 'Đang phát...' : 'Nghe lại giọng mình'}
+              </button>
+            ) : (
+              <div className="w-full rounded-2xl py-4 flex items-center justify-center text-white/30 border border-white/10">
+                <span className="text-sm">Đang xử lý âm thanh...</span>
+              </div>
+            )}
+            <button onClick={showScore} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
+              Chấm điểm →
+            </button>
+          </>
         )}
-        <div className="flex gap-2">
-          <button onClick={() => speak(word)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+
+        {/* Phase: result */}
+        {phase === 'result' && (
+          <>
+            <div className="flex gap-2">
+              {recordingUrl && (
+                <button onClick={playbackRecording} className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+                  {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
+                  {isPlayingBack ? 'Dừng' : 'Nghe lại'}
+                </button>
+              )}
+              <button onClick={() => speak(word)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+                <Volume2 size={16} />
+                Nghe mẫu
+              </button>
+            </div>
+            <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/60 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+              <RotateCcw size={18} />
+              Thử lại
+            </button>
+          </>
+        )}
+
+        {/* Always show "Nghe mẫu" in ready/listening */}
+        {(phase === 'ready' || phase === 'listening') && (
+          <button onClick={() => speak(word)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
             <Volume2 size={18} />
             Nghe mẫu
           </button>
-          {phase === 'result' && recordingUrl && (
-            <button onClick={playbackRecording} className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
-              {isPlayingBack ? <Square size={18} /> : <Play size={18} />}
-              {isPlayingBack ? 'Dừng' : 'Nghe lại'}
-            </button>
-          )}
-        </div>
+        )}
+
       </div>
     </div>
   )
