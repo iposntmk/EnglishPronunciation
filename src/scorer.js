@@ -1,4 +1,4 @@
-import { AutoProcessor, AutoModelForCTC, env } from '@huggingface/transformers'
+import { AutoProcessor, AutoModelForCTC, pipeline, env } from '@huggingface/transformers'
 
 env.allowLocalModels = false
 env.useBrowserCache = true
@@ -208,8 +208,71 @@ async function scoreWordOffline(audioBlob, phonemes) {
   return { phonemes: scored, overall, spokenWord: spokenWord || phonemes.map(p => p.text).join('') }
 }
 
+// ─── WHISPER LOCAL (no API key) ───────────────────────────────────────────
+
+let _whisperPipe = null
+let _whisperPromise = null
+
+export function isWhisperReady() { return _whisperPipe !== null }
+
+export function ensureWhisperLoaded(onProgress) {
+  if (isWhisperReady()) return Promise.resolve()
+  if (!_whisperPromise) {
+    _whisperPromise = pipeline(
+      'automatic-speech-recognition',
+      'Xenova/whisper-tiny.en',
+      onProgress ? { progress_callback: onProgress } : {}
+    ).then(pipe => { _whisperPipe = pipe })
+      .catch(e => { _whisperPromise = null; throw e })
+  }
+  return _whisperPromise
+}
+
+function levenshtein(a, b) {
+  const m = a.length, n = b.length
+  const dp = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)))
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1])
+  return dp[m][n]
+}
+
+async function scoreWordWhisperLocal(audioBlob, phonemes) {
+  await ensureWhisperLoaded()
+
+  const arrayBuffer = await audioBlob.arrayBuffer()
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
+  const decoded = await ctx.decodeAudioData(arrayBuffer)
+  const float32 = decoded.getChannelData(0)
+  ctx.close()
+
+  const result = await _whisperPipe(float32, { language: 'english', task: 'transcribe' })
+  const transcript = (result.text || '').trim().toLowerCase().replace(/[.,!?'"]/g, '')
+  const spokenWord = transcript.split(/\s+/)[0] || transcript
+  const targetWord = phonemes.map(p => p.text).join('').toLowerCase()
+
+  const wordMatch = spokenWord === targetWord || transcript.includes(targetWord)
+  const dist = levenshtein(spokenWord, targetWord)
+  const similarity = 1 - dist / Math.max(spokenWord.length, targetWord.length, 1)
+  const overall = wordMatch ? 88 : Math.round(Math.max(20, similarity * 80))
+
+  const scored = phonemes.map(p => ({
+    ...p,
+    score: overall,
+    note: !wordMatch && overall < 70 ? `Nghe như "${spokenWord}"` : null,
+  }))
+  return { phonemes: scored, overall, spokenWord }
+}
+
 export async function scoreWord(audioBlob, phonemes) {
-  const provider = localStorage.getItem('pronunciationProvider') || 'offline'
+  const provider = localStorage.getItem('pronunciationProvider') || 'whisper-local'
+
+  if (provider === 'whisper-local') {
+    return scoreWordWhisperLocal(audioBlob, phonemes)
+  }
 
   if (provider === 'openai') {
     const apiKey = localStorage.getItem('openaiApiKey') || ''

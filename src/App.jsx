@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square, Settings } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
-import { ensureModelLoaded, isModelReady, scoreWord } from './scorer.js'
+import { ensureModelLoaded, isModelReady, ensureWhisperLoaded, isWhisperReady, scoreWord } from './scorer.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -520,21 +520,26 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const provider = localStorage.getItem('pronunciationProvider') || 'offline'
-  const [modelReady, setModelReady] = useState(() => provider !== 'offline' || isModelReady())
+  const provider = localStorage.getItem('pronunciationProvider') || 'whisper-local'
+  const isLocalProvider = provider === 'whisper-local' || provider === 'offline'
+  const [modelReady, setModelReady] = useState(() => {
+    if (provider === 'whisper-local') return isWhisperReady()
+    if (provider === 'offline') return isModelReady()
+    return true
+  })
   const [loadPct, setLoadPct] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
 
-  // Preload offline model when this screen opens (skipped for API providers)
   useEffect(() => {
-    const prov = localStorage.getItem('pronunciationProvider') || 'offline'
-    if (prov !== 'offline') { setModelReady(true); return }
-    if (isModelReady()) { setModelReady(true); return }
+    if (!isLocalProvider) { setModelReady(true); return }
+    if (provider === 'whisper-local' && isWhisperReady()) { setModelReady(true); return }
+    if (provider === 'offline' && isModelReady()) { setModelReady(true); return }
+
     const totals = {}
-    ensureModelLoaded(ev => {
+    const onProgress = ev => {
       if (ev.status === 'progress') {
         totals[ev.file] = { loaded: ev.loaded, total: ev.total }
         const vals = Object.values(totals)
@@ -542,7 +547,13 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
         setLoadPct(Math.round(pct * 100))
       }
       if (ev.status === 'ready') setModelReady(true)
-    }).then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
+    }
+
+    const loader = provider === 'whisper-local'
+      ? ensureWhisperLoaded(onProgress)
+      : ensureModelLoaded(onProgress)
+
+    loader.then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
   }, [])
 
   useEffect(() => () => {
@@ -700,7 +711,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           <div className="w-full rounded-2xl py-3 px-4 bg-white/5 border border-white/10 text-white/60 text-sm">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-              Đang tải mô hình AI ({loadPct}%)...
+              {provider === 'whisper-local' ? `Đang tải Whisper (${loadPct}%)...` : `Đang tải mô hình AI (${loadPct}%)...`}
             </div>
             <div className="w-full bg-white/10 rounded-full h-1.5">
               <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${loadPct}%` }} />
@@ -1002,33 +1013,45 @@ function DictionaryScreen({ onBack }) {
 
 const PROVIDERS = [
   {
-    id: 'offline',
-    label: 'Offline (Transformers.js)',
-    badge: null,
-    desc: 'Chạy ngay trên trình duyệt, không cần internet. Tải model ~40MB lần đầu.',
+    id: 'whisper-local',
+    label: 'Whisper trong trình duyệt',
+    badge: 'KHÔNG CẦN KEY',
+    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    desc: 'Whisper tiny chạy offline ngay trên trình duyệt. Tải ~75MB lần đầu, không cần internet.',
   },
   {
-    id: 'groq',
-    label: 'Groq Whisper',
-    badge: 'MIỄN PHÍ',
-    desc: 'Whisper large-v3 qua Groq API — miễn phí, không giới hạn thực tế, rất nhanh.',
+    id: 'offline',
+    label: 'Offline CTC (wav2vec2)',
+    badge: 'KHÔNG CẦN KEY',
+    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    desc: 'Chấm điểm từng âm vị chi tiết hơn. Tải ~40MB lần đầu.',
   },
   {
     id: 'azure',
     label: 'Azure Pronunciation Assessment',
     badge: 'TỐT NHẤT',
-    desc: 'Chấm điểm từng âm vị chính xác. Miễn phí 5 giờ/tháng.',
+    badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+    desc: 'Per-phoneme scoring chính xác nhất. Miễn phí 5 giờ/tháng, cần tạo tài khoản.',
+  },
+  {
+    id: 'groq',
+    label: 'Groq Whisper',
+    badge: 'FREE ACCOUNT',
+    badgeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    desc: 'Whisper large-v3 — nhanh, chính xác cao. Cần tạo tài khoản miễn phí tại groq.com.',
   },
   {
     id: 'google',
     label: 'Google Cloud Speech',
     badge: 'FREE 60ph',
+    badgeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
     desc: 'Speech-to-Text V1 — miễn phí 60 phút/tháng, cần API key.',
   },
   {
     id: 'openai',
     label: 'OpenAI Whisper',
     badge: null,
+    badgeColor: '',
     desc: 'Whisper-1 qua OpenAI API, tính phí theo phút.',
   },
 ]
@@ -1050,7 +1073,7 @@ function KeyField({ label, value, onChange, placeholder, hint }) {
 }
 
 function SettingsScreen() {
-  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'offline')
+  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'whisper-local')
   const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openaiApiKey') || '')
   const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groqApiKey') || '')
   const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('googleApiKey') || '')
@@ -1090,7 +1113,7 @@ function SettingsScreen() {
                   <div className="flex items-center gap-2">
                     <span className={`font-semibold text-sm ${provider === opt.id ? 'text-blue-300' : 'text-white/80'}`}>{opt.label}</span>
                     {opt.badge && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">{opt.badge}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${opt.badgeColor}`}>{opt.badge}</span>
                     )}
                   </div>
                   <div className="text-white/40 text-xs mt-0.5">{opt.desc}</div>
