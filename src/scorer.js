@@ -218,10 +218,12 @@ export function isWhisperReady() { return _whisperPipe !== null }
 export function ensureWhisperLoaded(onProgress) {
   if (isWhisperReady()) return Promise.resolve()
   if (!_whisperPromise) {
+    // dtype: 'q8' avoids the q4/int4 decoder model that requires MatMulNBits
+    // ONNX ops not yet supported in browser WASM (transformers.js v4.x default is q4)
     _whisperPromise = pipeline(
       'automatic-speech-recognition',
       'Xenova/whisper-tiny.en',
-      onProgress ? { progress_callback: onProgress } : {}
+      { dtype: 'q8', ...(onProgress ? { progress_callback: onProgress } : {}) }
     ).then(pipe => { _whisperPipe = pipe })
       .catch(e => { _whisperPromise = null; throw e })
   }
