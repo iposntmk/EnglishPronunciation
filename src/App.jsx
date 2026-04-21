@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square, Settings } from 'lucide-react'
+import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
-import { ensureModelLoaded, isModelReady, scoreWord } from './scorer.js'
+import { scoreWord } from './scorer.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -520,89 +520,16 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const provider = localStorage.getItem('pronunciationProvider') || 'web-speech'
-  const needsModelLoad = provider === 'offline'
-  const [modelReady, setModelReady] = useState(() => {
-    if (provider === 'offline') return isModelReady()
-    return true
-  })
-  const [loadPct, setLoadPct] = useState(0)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const speechRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
 
-  useEffect(() => {
-    if (!needsModelLoad) { setModelReady(true); return }
-    if (isModelReady()) { setModelReady(true); return }
-    const totals = {}
-    const onProgress = ev => {
-      if (ev.status === 'progress') {
-        totals[ev.file] = { loaded: ev.loaded, total: ev.total }
-        const vals = Object.values(totals)
-        const pct = vals.reduce((s, x) => s + x.loaded, 0) / Math.max(1, vals.reduce((s, x) => s + x.total, 0))
-        setLoadPct(Math.round(pct * 100))
-      }
-      if (ev.status === 'ready') setModelReady(true)
-    }
-    ensureModelLoaded(onProgress).then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
-  }, [])
-
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  // ── Web Speech API path (no MediaRecorder — avoids mic conflict on Android) ─
-  const startWebSpeech = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) {
-      setErrorMsg('Trình duyệt không hỗ trợ Web Speech API. Dùng Chrome hoặc Edge.')
-      return
-    }
-    const recognition = new SR()
-    recognition.lang = 'en-US'
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
-    speechRef.current = recognition
-
-    recognition.onresult = ev => {
-      clearTimeout(timeoutRef.current)
-      const transcript = (ev.results[0][0].transcript || '').trim().toLowerCase().replace(/[.,!?'"]/g, '')
-      const confidence = ev.results[0][0].confidence || 0.8
-      const spokenWord = transcript.split(/\s+/)[0] || transcript
-      const targetWord = phonemes.map(p => p.text).join('').toLowerCase()
-      const wordMatch = spokenWord === targetWord || transcript.includes(targetWord)
-      const baseScore = Math.round(confidence * 100)
-      const overall = wordMatch ? baseScore : Math.max(0, baseScore - 25)
-      const scored = phonemes.map(p => ({
-        ...p, score: overall,
-        note: !wordMatch && overall < 70 ? `Nghe như "${spokenWord}"` : null,
-      }))
-      setResult({ phonemes: scored, overall, spokenWord })
-      setPhase('result')
-    }
-    recognition.onerror = ev => {
-      clearTimeout(timeoutRef.current)
-      if (ev.error === 'aborted') return
-      if (ev.error === 'no-speech') setErrorMsg('Không nghe thấy giọng nói. Thử nói to hơn.')
-      else if (ev.error === 'not-allowed') setErrorMsg('Chưa cấp quyền microphone — nhấn icon 🔒 và bật Microphone.')
-      else setErrorMsg(`Lỗi nhận dạng: ${ev.error}`)
-      setPhase('ready')
-    }
-    recognition.onend = () => {
-      clearTimeout(timeoutRef.current)
-      // Only reset if no result came through yet
-      setPhase(prev => prev === 'recording' ? 'ready' : prev)
-    }
-
-    recognition.start()
-    setPhase('recording')
-    timeoutRef.current = setTimeout(() => recognition.stop(), 7000)
-  }, [phonemes])
-
-  // ── Blob-based path (offline / API) ──────────────────────────────────────
   const startBlobRecording = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(stream => {
@@ -642,19 +569,16 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const startRecording = useCallback(() => {
     setRecordingUrl(null)
     setErrorMsg(null)
-    if (provider === 'web-speech') { startWebSpeech(); return }
     startBlobRecording()
-  }, [provider, startWebSpeech, startBlobRecording])
+  }, [startBlobRecording])
 
   const stopRecording = () => {
     clearTimeout(timeoutRef.current)
-    if (provider === 'web-speech') { speechRef.current?.stop(); return }
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
   const reset = () => {
     clearTimeout(timeoutRef.current)
-    speechRef.current?.abort()
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     setPhase('ready'); setResult(null); setSelectedIdx(null)
@@ -747,23 +671,10 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           </div>
         )}
 
-        {/* Model loading indicator */}
-        {!modelReady && (
-          <div className="w-full rounded-2xl py-3 px-4 bg-white/5 border border-white/10 text-white/60 text-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-              {`Đang tải mô hình AI — ${loadPct}%...`}
-            </div>
-            <div className="w-full bg-white/10 rounded-full h-1.5">
-              <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${loadPct}%` }} />
-            </div>
-          </div>
-        )}
-
         {/* Bước 1: ready */}
         {phase === 'ready' && (
-          <button onClick={startRecording} disabled={!modelReady}
-            className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform disabled:opacity-40 disabled:pointer-events-none">
+          <button onClick={startRecording}
+            className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
             <Mic size={24} />
             Bắt đầu ghi âm
           </button>
@@ -1050,180 +961,6 @@ function DictionaryScreen({ onBack }) {
   )
 }
 
-// ─── SETTINGS SCREEN ──────────────────────────────────────────────────────
-
-const PROVIDERS = [
-  {
-    id: 'web-speech',
-    label: 'Web Speech API',
-    badge: 'KHÔNG CẦN KEY',
-    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    desc: 'Dùng engine nhận dạng có sẵn của Chrome/Safari/Edge. Không cần tải gì, không cần tài khoản.',
-  },
-  {
-    id: 'offline',
-    label: 'Offline CTC (wav2vec2)',
-    badge: 'KHÔNG CẦN KEY',
-    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    desc: 'Chấm điểm từng âm vị chi tiết. Tải ~40MB lần đầu, hoạt động offline.',
-  },
-  {
-    id: 'azure',
-    label: 'Azure Pronunciation Assessment',
-    badge: 'TỐT NHẤT',
-    badgeColor: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
-    desc: 'Chấm điểm từng âm vị chính xác nhất. Miễn phí 5 giờ/tháng, cần tạo tài khoản.',
-  },
-  {
-    id: 'groq',
-    label: 'Groq Whisper',
-    badge: 'FREE ACCOUNT',
-    badgeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    desc: 'Whisper large-v3 qua Groq API. Cần tạo tài khoản miễn phí tại groq.com.',
-  },
-  {
-    id: 'google',
-    label: 'Google Cloud Speech',
-    badge: 'FREE 60ph',
-    badgeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    desc: 'Speech-to-Text V1 — miễn phí 60 phút/tháng, cần API key.',
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI Whisper',
-    badge: null,
-    badgeColor: '',
-    desc: 'Whisper-1 qua OpenAI API, tính phí theo phút.',
-  },
-]
-
-function KeyField({ label, value, onChange, placeholder, hint }) {
-  return (
-    <div className="px-4 mb-4">
-      <div className="text-white/60 text-xs uppercase tracking-wider mb-2 font-semibold">{label}</div>
-      <input
-        type="password"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3.5 text-white placeholder-white/30 focus:outline-none focus:border-white/30 font-mono text-sm"
-      />
-      {hint && <p className="text-white/30 text-xs mt-1.5">{hint}</p>}
-    </div>
-  )
-}
-
-function SettingsScreen() {
-  const [provider, setProvider] = useState(() => localStorage.getItem('pronunciationProvider') || 'web-speech')
-  const [openaiKey, setOpenaiKey] = useState(() => localStorage.getItem('openaiApiKey') || '')
-  const [groqKey, setGroqKey] = useState(() => localStorage.getItem('groqApiKey') || '')
-  const [googleKey, setGoogleKey] = useState(() => localStorage.getItem('googleApiKey') || '')
-  const [azureKey, setAzureKey] = useState(() => localStorage.getItem('azureSubscriptionKey') || '')
-  const [azureRegion, setAzureRegion] = useState(() => localStorage.getItem('azureRegion') || '')
-  const [saved, setSaved] = useState(false)
-
-  const save = () => {
-    localStorage.setItem('pronunciationProvider', provider)
-    localStorage.setItem('openaiApiKey', openaiKey.trim())
-    localStorage.setItem('groqApiKey', groqKey.trim())
-    localStorage.setItem('googleApiKey', googleKey.trim())
-    localStorage.setItem('azureSubscriptionKey', azureKey.trim())
-    localStorage.setItem('azureRegion', azureRegion.trim())
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
-      <div className="px-4 pt-10 pb-6">
-        <h1 className="text-2xl font-bold text-white">Cài Đặt</h1>
-        <p className="text-white/40 text-sm">Chọn engine chấm điểm phát âm</p>
-      </div>
-
-      <div className="px-4 mb-6">
-        <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Engine chấm điểm</div>
-        <div className="flex flex-col gap-2">
-          {PROVIDERS.map(opt => (
-            <button key={opt.id} onClick={() => setProvider(opt.id)}
-              className={`text-left rounded-2xl p-4 border transition-all ${provider === opt.id ? 'bg-blue-600/20 border-blue-500/50' : 'bg-white/5 border-white/10 hover:bg-white/8'}`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${provider === opt.id ? 'border-blue-400' : 'border-white/30'}`}>
-                  {provider === opt.id && <div className="w-2 h-2 bg-blue-400 rounded-full" />}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold text-sm ${provider === opt.id ? 'text-blue-300' : 'text-white/80'}`}>{opt.label}</span>
-                    {opt.badge && (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${opt.badgeColor}`}>{opt.badge}</span>
-                    )}
-                  </div>
-                  <div className="text-white/40 text-xs mt-0.5">{opt.desc}</div>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {provider === 'groq' && (
-        <KeyField
-          label="Groq API Key"
-          value={groqKey}
-          onChange={setGroqKey}
-          placeholder="gsk_..."
-          hint="Đăng ký miễn phí tại console.groq.com → API Keys"
-        />
-      )}
-
-      {provider === 'azure' && (
-        <>
-          <KeyField
-            label="Azure Subscription Key"
-            value={azureKey}
-            onChange={setAzureKey}
-            placeholder="32 ký tự hex..."
-            hint="Azure Portal → Cognitive Services → Keys and Endpoint"
-          />
-          <KeyField
-            label="Azure Region"
-            value={azureRegion}
-            onChange={setAzureRegion}
-            placeholder="eastus / southeastasia / ..."
-            hint="Ví dụ: eastus, westus2, southeastasia"
-          />
-        </>
-      )}
-
-      {provider === 'google' && (
-        <KeyField
-          label="Google Cloud API Key"
-          value={googleKey}
-          onChange={setGoogleKey}
-          placeholder="AIza..."
-          hint="console.cloud.google.com → APIs & Services → Credentials"
-        />
-      )}
-
-      {provider === 'openai' && (
-        <KeyField
-          label="OpenAI API Key"
-          value={openaiKey}
-          onChange={setOpenaiKey}
-          placeholder="sk-..."
-          hint="platform.openai.com → API keys"
-        />
-      )}
-
-      <div className="px-4">
-        <button onClick={save}
-          className={`w-full rounded-2xl py-4 font-semibold text-base transition-all active:scale-95 ${saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
-          {saved ? 'Đã lưu!' : 'Lưu cài đặt'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ─── BOTTOM NAV ───────────────────────────────────────────────────────────
 
 function BottomNav({ screen, onNavigate }) {
@@ -1232,7 +969,6 @@ function BottomNav({ screen, onNavigate }) {
       {[
         { id: 'library', icon: Library, label: 'Sound Library' },
         { id: 'dictionary', icon: BookOpen, label: 'Từ Điển' },
-        { id: 'settings', icon: Settings, label: 'Cài Đặt' },
       ].map(({ id, icon: Icon, label }) => (
         <button key={id} onClick={() => onNavigate(id)}
           className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${screen === id ? 'text-white' : 'text-white/30 hover:text-white/60'}`}>
@@ -1269,10 +1005,7 @@ export default function App() {
       {screen === 'dictionary' && (
         <DictionaryScreen onBack={() => handleNavigate('library')} />
       )}
-      {screen === 'settings' && (
-        <SettingsScreen />
-      )}
-      {(screen === 'library' || screen === 'dictionary' || screen === 'settings') && (
+      {(screen === 'library' || screen === 'dictionary') && (
         <BottomNav screen={screen} onNavigate={handleNavigate} />
       )}
     </div>
