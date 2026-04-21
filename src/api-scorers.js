@@ -196,6 +196,7 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   }
 
   const data = await resp.json()
+
   if (data.RecognitionStatus !== 'Success') {
     throw new Error(`Azure không nhận ra giọng nói: ${data.RecognitionStatus}`)
   }
@@ -203,7 +204,7 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   const nbest = data.NBest?.[0]
   const spokenWord = (nbest?.Lexical || '').trim().toLowerCase().replace(/[.,!?]/g, '').split(/\s+/)[0] || ''
   const wordAssessment = nbest?.PronunciationAssessment
-  const overallScore = Math.round(wordAssessment?.AccuracyScore ?? wordAssessment?.PronScore ?? 0)
+  const overallScore = Math.round(wordAssessment?.PronScore ?? wordAssessment?.AccuracyScore ?? 0)
 
   // Build IPA → score map from Azure per-phoneme data
   const azurePhonemes = nbest?.Words?.[0]?.Phonemes || []
