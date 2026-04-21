@@ -508,7 +508,7 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
 
-function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltPhonemes = null, onBack }) {
+function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltPhonemes = null, onBack, onNext = null, onPrev = null }) {
   const phonemes = prebuiltPhonemes || lookupWord(word)
   // phases: ready → recording → scoring → result
   const [phase, setPhase] = useState('ready')
@@ -624,6 +624,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
           <Volume2 size={22} className="text-white/40" />
         </button>
         <div className="text-white/50 text-sm mt-1">{meaning}</div>
+        <div className="text-white/35 font-mono text-sm mt-0.5">/{phonemes.map(p => p.ipa).join('')}/</div>
 
         <div className="flex flex-wrap justify-center gap-2 mt-4">
           {phonemes.map((p, idx) => {
@@ -740,6 +741,18 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               <RotateCcw size={18} />
               Thử lại
             </button>
+            {(onPrev || onNext) && (
+              <div className="flex gap-2">
+                <button onClick={onPrev} disabled={!onPrev}
+                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  ‹ Từ trước
+                </button>
+                <button onClick={onNext} disabled={!onNext}
+                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  Từ tiếp theo ›
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -763,6 +776,18 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               <RotateCcw size={18} />
               Thử lại
             </button>
+            {(onPrev || onNext) && (
+              <div className="flex gap-2">
+                <button onClick={onPrev} disabled={!onPrev}
+                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  ‹ Từ trước
+                </button>
+                <button onClick={onNext} disabled={!onNext}
+                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  Từ tiếp theo ›
+                </button>
+              </div>
+            )}
           </>
         )}
 
@@ -940,8 +965,8 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
       <div className="px-4">
         <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Luyện tập với từ</div>
         <div className="flex flex-col gap-3">
-          {sound.words.map(w => (
-            <button key={w.word} onClick={() => onPracticeWord(w)}
+          {sound.words.map((w, idx) => (
+            <button key={w.word} onClick={() => onPracticeWord(w, idx)}
               className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-2xl px-4 py-4 active:scale-98 hover:bg-white/8 transition-all text-left">
               <span className="text-3xl">{w.emoji}</span>
               <div className="flex-1">
@@ -962,7 +987,7 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
   )
 }
 
-function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBack }) {
+function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBack, onNext, onPrev }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a]">
       <div className="px-4 pt-6 pb-2 flex items-center gap-3">
@@ -971,7 +996,7 @@ function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBa
         </button>
         <span className="text-white/50 text-sm">Luyện phát âm</span>
       </div>
-      <PronunciationPractice word={word} meaning={meaning} emoji={emoji} lang={lang} prebuiltPhonemes={prebuiltPhonemes} onBack={onBack} />
+      <PronunciationPractice key={word} word={word} meaning={meaning} emoji={emoji} lang={lang} prebuiltPhonemes={prebuiltPhonemes} onBack={onBack} onNext={onNext} onPrev={onPrev} />
     </div>
   )
 }
@@ -1066,14 +1091,23 @@ export default function App() {
   const [screen, setScreen] = useState('library')
   const [selectedSound, setSelectedSound] = useState(null)
   const [practiceWord, setPracticeWord] = useState(null)
+  const [practiceWordIdx, setPracticeWordIdx] = useState(0)
   const [lang, setLang] = useState('en')   // 'en' | 'es' | 'it'
 
   const azureCode = LANG_CONFIG[lang].azureCode
 
   const handleSelectSound = (sound) => { setSelectedSound(sound); setScreen('soundDetail') }
-  const handlePracticeWord = (w) => { setPracticeWord(w); setScreen('practiceWord') }
+  const handlePracticeWord = (w, idx = 0) => { setPracticeWord(w); setPracticeWordIdx(idx); setScreen('practiceWord') }
   const handleNavigate = (s) => { setScreen(s); setSelectedSound(null); setPracticeWord(null) }
   const handleChangeLang = (l) => { setLang(l); setSelectedSound(null); setPracticeWord(null) }
+
+  const soundWords = selectedSound?.words || []
+  const onNextWord = practiceWordIdx < soundWords.length - 1
+    ? () => { const i = practiceWordIdx + 1; setPracticeWord(soundWords[i]); setPracticeWordIdx(i) }
+    : null
+  const onPrevWord = practiceWordIdx > 0
+    ? () => { const i = practiceWordIdx - 1; setPracticeWord(soundWords[i]); setPracticeWordIdx(i) }
+    : null
 
   // Build prebuilt phonemes for Spanish/Italian words
   const phonemeInfoMap = lang === 'es' ? SPANISH_PHONEME_INFO : lang === 'it' ? ITALIAN_PHONEME_INFO : lang === 'fr' ? FRENCH_PHONEME_INFO : null
@@ -1098,6 +1132,8 @@ export default function App() {
           lang={azureCode}
           prebuiltPhonemes={getWordPhonemes(practiceWord)}
           onBack={() => setScreen('soundDetail')}
+          onNext={onNextWord}
+          onPrev={onPrevWord}
         />
       )}
       {screen === 'dictionary' && (
