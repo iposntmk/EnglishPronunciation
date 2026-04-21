@@ -21,10 +21,23 @@ function whisperScoreFromTranscript(data, phonemes) {
 
 async function audioBlobToPcmWav(blob) {
   const arrayBuffer = await blob.arrayBuffer()
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
+  const ctx = new (window.AudioContext || window.webkitAudioContext)()
   const decoded = await ctx.decodeAudioData(arrayBuffer)
-  const pcm = decoded.getChannelData(0)
   ctx.close()
+
+  let pcm
+  if (decoded.sampleRate === 16000) {
+    pcm = decoded.getChannelData(0)
+  } else {
+    const frames = Math.ceil(decoded.length / decoded.sampleRate * 16000)
+    const offCtx = new OfflineAudioContext(1, frames, 16000)
+    const src = offCtx.createBufferSource()
+    src.buffer = decoded
+    src.connect(offCtx.destination)
+    src.start()
+    const resampled = await offCtx.startRendering()
+    pcm = resampled.getChannelData(0)
+  }
   const wavBuf = new ArrayBuffer(44 + pcm.length * 2)
   const v = new DataView(wavBuf)
   const ws = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)) }
@@ -196,28 +209,24 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   }
 
   const data = await resp.json()
-  console.log('[Azure] raw response:', JSON.stringify(data).slice(0, 1000))
 
   if (data.RecognitionStatus !== 'Success') {
     throw new Error(`Azure không nhận ra giọng nói: ${data.RecognitionStatus}`)
   }
 
   const nbest = data.NBest?.[0]
-  console.log('[Azure] NBest[0]:', JSON.stringify(nbest).slice(0, 500))
   const spokenWord = (nbest?.Lexical || '').trim().toLowerCase().replace(/[.,!?]/g, '').split(/\s+/)[0] || ''
-  const wordAssessment = nbest?.PronunciationAssessment
-  console.log('[Azure] PronunciationAssessment:', wordAssessment)
-  const overallScore = Math.round(wordAssessment?.PronScore ?? wordAssessment?.AccuracyScore ?? 0)
-  console.log('[Azure] overallScore:', overallScore)
+  // Scores are directly on NBest[0], not nested under PronunciationAssessment
+  const overallScore = Math.round(nbest?.PronScore ?? nbest?.AccuracyScore ?? 0)
 
   // Build IPA → score map from Azure per-phoneme data
   const azurePhonemes = nbest?.Words?.[0]?.Phonemes || []
-  console.log('[Azure] phonemes from API:', azurePhonemes)
   const ipaScoreMap = {}
   for (const ap of azurePhonemes) {
     const ipa = AZURE_TO_IPA[ap.Phoneme?.toLowerCase()]
     if (!ipa) continue
-    const s = ap.PronunciationAssessment?.AccuracyScore ?? 0
+    // Scores are directly on phoneme object
+    const s = ap.AccuracyScore ?? ap.PronunciationAssessment?.AccuracyScore ?? 0
     if (!(ipa in ipaScoreMap) || s > ipaScoreMap[ipa]) ipaScoreMap[ipa] = s
   }
 
