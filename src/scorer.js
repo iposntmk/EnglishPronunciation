@@ -222,8 +222,11 @@ export function ensureWhisperLoaded(onProgress) {
     // ONNX ops not yet supported in browser WASM (transformers.js v4.x default is q4)
     _whisperPromise = pipeline(
       'automatic-speech-recognition',
-      'Xenova/whisper-tiny.en',
-      { dtype: 'q8', ...(onProgress ? { progress_callback: onProgress } : {}) }
+      'onnx-community/whisper-tiny.en',
+      {
+        dtype: { encoder_model: 'fp32', decoder_model_merged: 'q8' },
+        ...(onProgress ? { progress_callback: onProgress } : {}),
+      }
     ).then(pipe => { _whisperPipe = pipe })
       .catch(e => { _whisperPromise = null; throw e })
   }
