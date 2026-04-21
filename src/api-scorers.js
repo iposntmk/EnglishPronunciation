@@ -187,7 +187,12 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '')
-    throw new Error(`Azure API lỗi ${resp.status}: ${txt.slice(0, 120)}`)
+    const hint = resp.status === 401
+      ? ' — Key sai hoặc hết hạn. Kiểm tra lại GitHub Secret AZUREKEY.'
+      : resp.status === 403 ? ' — Không có quyền truy cập resource.'
+      : resp.status === 0 ? ' — CORS bị chặn.'
+      : ''
+    throw new Error(`Azure ${resp.status}${hint} ${txt.slice(0, 150)}`)
   }
 
   const data = await resp.json()
