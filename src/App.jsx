@@ -730,30 +730,45 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
       </div>
 
       {/* Kết quả tổng */}
-      {result && (
-        <div className="mx-4 mb-4 rounded-2xl bg-white/5 border border-white/10 p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-white/60 text-sm">Kết quả:</span>
-            <span className="text-white/40 text-sm">Từ: "{result.spokenWord || '—'}"</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-3 bg-white/10 rounded-full overflow-hidden">
-              <div className={`h-full rounded-full transition-all duration-700 ${result.overall >= 85 ? 'bg-emerald-400' : result.overall >= 65 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                style={{ width: `${result.overall}%` }} />
+      {result && (() => {
+        const wrongStress = result.stress && !result.stress.correct
+        return (
+          <div className={`mx-4 mb-4 rounded-2xl p-4 border ${wrongStress ? 'bg-red-500/10 border-red-500/40' : 'bg-white/5 border-white/10'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-white/60 text-sm">Kết quả:</span>
+              <span className="text-white/40 text-sm">Từ: "{result.spokenWord || '—'}"</span>
             </div>
-            <span className={`font-bold text-lg ${scoreColor(result.overall)}`}>{result.overall}%</span>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-3 bg-white/10 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full transition-all duration-700 ${result.overall >= 85 ? 'bg-emerald-400' : result.overall >= 65 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                  style={{ width: `${Math.max(result.overall, wrongStress ? 2 : 0)}%` }} />
+              </div>
+              <span className={`font-bold text-lg ${scoreColor(result.overall)}`}>{result.overall}%</span>
+            </div>
+            {wrongStress
+              ? <p className="text-red-400 font-semibold text-sm mt-1">Nhấn âm sai ❌ — 0 điểm</p>
+              : <p className={`text-sm mt-1 ${scoreColor(result.overall)}`}>{scoreLabel(result.overall)}</p>
+            }
+            <p className="text-white/40 text-xs mt-1">Nhấn vào từng âm để xem chi tiết</p>
           </div>
-          <p className={`text-sm mt-1 ${scoreColor(result.overall)}`}>{scoreLabel(result.overall)}</p>
-          <p className="text-white/40 text-xs mt-1">Nhấn vào từng âm để xem chi tiết</p>
+        )
+      })()}
+
+      {result?.stress && !result.stress.correct && (
+        <div className="mx-4 mb-4 rounded-2xl border bg-red-500/10 border-red-500/40 p-3 flex items-center gap-3">
+          <span className="text-2xl">❌</span>
+          <div>
+            <div className="text-red-400 text-xs font-bold uppercase tracking-wide mb-0.5">Nhấn âm sai</div>
+            <div className="text-red-300 text-sm">{result.stress.note}</div>
+          </div>
         </div>
       )}
-
-      {result?.stress && (
-        <div className={`mx-4 mb-4 rounded-2xl border p-3 flex items-center gap-3 ${result.stress.correct ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
-          <span className="text-xl">{result.stress.correct ? '✓' : '⚠️'}</span>
+      {result?.stress?.correct && (
+        <div className="mx-4 mb-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/30 p-3 flex items-center gap-3">
+          <span className="text-xl">✓</span>
           <div>
             <div className="text-white/70 text-xs font-semibold uppercase tracking-wide mb-0.5">Trọng âm</div>
-            <div className={`text-sm font-medium ${result.stress.correct ? 'text-emerald-400' : 'text-yellow-400'}`}>{result.stress.note}</div>
+            <div className="text-emerald-400 text-sm">{result.stress.note}</div>
           </div>
         </div>
       )}

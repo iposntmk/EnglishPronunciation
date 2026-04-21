@@ -329,28 +329,44 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
     ? Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
     : overallScore
 
-  // Syllable stress detection — English only, words with ≥ 2 vowel phonemes
+  // Syllable stress detection — English only, words with an isStressed phoneme
   let stress = null
   if (language === 'en-US') {
-    const allVowels = scored.filter(p => VOWEL_IPA_SET.has(p.ipa))
-    const expectedIdx = EN_STRESS_IDX[targetWord.toLowerCase()]
-    if (allVowels.length >= 2 && expectedIdx !== undefined) {
-      const vowelsWithTiming = allVowels.filter(p => p.audioDuration !== null && p.audioDuration > 0)
-      if (vowelsWithTiming.length >= 2) {
-        const longest = vowelsWithTiming.reduce((a, b) => (b.audioDuration > a.audioDuration ? b : a))
-        const detectedIdx = allVowels.indexOf(longest)
-        const correct = detectedIdx === expectedIdx
-        stress = {
-          correct,
-          detected: detectedIdx,
-          expected: expectedIdx,
-          score: correct ? 100 : 30,
-          detectedIpa: allVowels[detectedIdx]?.ipa,
-          expectedIpa: allVowels[expectedIdx]?.ipa,
-          note: correct
-            ? 'Trọng âm đúng ✓'
-            : `Cần nhấn mạnh âm /${allVowels[expectedIdx]?.ipa}/ (âm thứ ${expectedIdx + 1})`,
-        }
+    const stressedPh = scored.find(p => p.isStressed)
+    const unstressedPhs = scored.filter(p => !p.isStressed)
+
+    if (stressedPh && unstressedPhs.length > 0) {
+      const stressScore = stressedPh.score
+      const avgUnstressed = unstressedPhs.length > 0
+        ? Math.round(unstressedPhs.reduce((s, p) => s + p.score, 0) / unstressedPhs.length)
+        : 0
+
+      // Duration-based: if any unstressed phoneme has longer duration than stressed → wrong stress
+      const phs_with_timing = scored.filter(p => p.audioDuration !== null && p.audioDuration > 0.02)
+      let wrongByDuration = false
+      if (phs_with_timing.length >= 2) {
+        const longest = phs_with_timing.reduce((a, b) => b.audioDuration > a.audioDuration ? b : a)
+        if (!longest.isStressed) wrongByDuration = true
+      }
+
+      // Score-based: stressed phoneme scores much worse than unstressed ones
+      const wrongByScore = stressScore < 50 && avgUnstressed >= stressScore + 25
+
+      const wrongStress = wrongByDuration || wrongByScore
+
+      stress = {
+        correct: !wrongStress,
+        expectedIpa: stressedPh.ipa,
+        note: wrongStress
+          ? `Nhấn âm sai → 0 điểm ⚠️  (cần nhấn mạnh /${stressedPh.ipa}/)`
+          : 'Trọng âm đúng ✓',
+      }
+
+      if (wrongStress) {
+        const penalized = scored.map(p =>
+          p.isStressed ? { ...p, score: 0, note: 'Nhấn âm sai ⚠️' } : p
+        )
+        return { phonemes: penalized, overall: 0, spokenWord, stress }
       }
     }
   }
