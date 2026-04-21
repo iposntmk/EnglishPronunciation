@@ -8,6 +8,7 @@ import {
 } from './data.js'
 import { scoreWord } from './scorer.js'
 import { getAzureUsageSummary } from './azureUsage.js'
+import { speakNeural } from './tts.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -497,29 +498,6 @@ function getSupportedMimeType() {
   return candidates.find(t => MediaRecorder.isTypeSupported(t)) || ''
 }
 
-if (typeof window !== 'undefined' && window.speechSynthesis) {
-  window.speechSynthesis.getVoices()
-  window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices()
-}
-
-function speak(text) {
-  const syn = window.speechSynthesis
-  if (!syn) return
-  syn.cancel()
-  const doSpeak = () => {
-    const utt = new SpeechSynthesisUtterance(text)
-    utt.lang = 'en-US'; utt.rate = 0.8; utt.pitch = 1
-    const voices = syn.getVoices()
-    const pick = voices.find(v => v.lang === 'en-US' && v.name.includes('Google'))
-      || voices.find(v => v.lang === 'en-US')
-      || voices.find(v => v.lang.startsWith('en'))
-    if (pick) utt.voice = pick
-    syn.speak(utt)
-  }
-  const voices = syn.getVoices()
-  if (voices.length > 0) { doSpeak() }
-  else { syn.onvoiceschanged = () => { syn.onvoiceschanged = null; doSpeak() }; setTimeout(() => { if (syn.getVoices().length > 0) doSpeak() }, 300) }
-}
 
 // ─── UI HELPERS ───────────────────────────────────────────────────────────
 
@@ -641,7 +619,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
       {/* Tiêu đề từ + IPA breakdown */}
       <div className="text-center py-6 px-4">
         <div className="text-5xl mb-2">{emoji}</div>
-        <button onClick={() => speak(word)} className="text-3xl font-bold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto">
+        <button onClick={() => speakNeural(word, lang)} className="text-3xl font-bold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto">
           {word}
           <Volume2 size={22} className="text-white/40" />
         </button>
@@ -707,6 +685,16 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
         </div>
       )}
 
+      {result?.stress && (
+        <div className={`mx-4 mb-4 rounded-2xl border p-3 flex items-center gap-3 ${result.stress.correct ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}>
+          <span className="text-xl">{result.stress.correct ? '✓' : '⚠️'}</span>
+          <div>
+            <div className="text-white/70 text-xs font-semibold uppercase tracking-wide mb-0.5">Trọng âm</div>
+            <div className={`text-sm font-medium ${result.stress.correct ? 'text-emerald-400' : 'text-yellow-400'}`}>{result.stress.note}</div>
+          </div>
+        </div>
+      )}
+
       {/* Nút điều khiển */}
       <div className="px-4 pb-6 mt-auto flex flex-col gap-3">
 
@@ -766,7 +754,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
                   {isPlayingBack ? 'Dừng' : 'Nghe lại'}
                 </button>
               )}
-              <button onClick={() => speak(word)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+              <button onClick={() => speakNeural(word, lang)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
                 <Volume2 size={16} />
                 Nghe mẫu
               </button>
@@ -780,7 +768,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 
         {/* Nghe mẫu ở ready/recording */}
         {(phase === 'ready' || phase === 'recording') && (
-          <button onClick={() => speak(word)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+          <button onClick={() => speakNeural(word, lang)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
             <Volume2 size={18} />
             Nghe mẫu
           </button>
@@ -887,6 +875,7 @@ function SoundLibraryScreen({ lang, onSelectSound, onGoDict, onChangeLang }) {
 }
 
 function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
+  const azureCode = LANG_CONFIG[lang]?.azureCode || 'en-US'
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-10">
       {/* Back */}
@@ -904,7 +893,7 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
             <div className="text-5xl font-bold text-white">{sound.label}</div>
             <div className="text-white/70 font-mono text-xl">/{sound.ipa}/</div>
           </div>
-          <button onClick={() => speak(sound.words[0].word)} className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center active:scale-95 transition-transform">
+          <button onClick={() => speakNeural(sound.words[0].word, azureCode)} className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center active:scale-95 transition-transform">
             <Volume2 size={26} className="text-white" />
           </button>
         </div>
@@ -960,7 +949,7 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
                 <div className="text-white/40 text-sm">{w.meaning}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={e => { e.stopPropagation(); speak(w.word) }} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center">
+                <button onClick={e => { e.stopPropagation(); speakNeural(w.word, azureCode) }} className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center">
                   <Volume2 size={14} className="text-white/60" />
                 </button>
                 <div className="text-white/20 text-lg">›</div>

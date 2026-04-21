@@ -162,6 +162,29 @@ export async function scoreWordGoogleCloud(audioBlob, phonemes, apiKey) {
 
 import { recordAzureUsage } from './azureUsage.js'
 
+const VOWEL_IPA_SET = new Set([
+  'iː','ɪ','ɛ','æ','ʌ','ə','ɜː','uː','ʊ','ɔː','ɑː',
+  'eɪ','aɪ','aʊ','oʊ','ɔɪ','ɛər','ɪər','ɑːr','ɔːr',
+])
+
+// 0-based index of stressed vowel (counting only vowel phonemes) for common EN words
+const EN_STRESS_IDX = {
+  about:1, after:0, again:1, always:0, another:1, answer:0,
+  banana:1, beautiful:0, because:1, before:1, better:0,
+  brother:0, butter:0, candy:0, careful:0, cheddar:0,
+  city:0, computer:1, different:0, dinner:0, enjoy:1, enough:1,
+  every:0, family:0, father:0, flower:0, funny:0, future:0,
+  gentle:0, giggly:0, happy:0, hello:1, hippo:0, important:1,
+  language:0, lazy:0, learning:0, lemon:0, little:0, lollipop:0,
+  morning:0, mother:0, muddy:0, music:0, nature:0, necklace:0,
+  nothing:0, only:0, open:0, other:0, people:0, photo:0,
+  pretty:0, problem:0, pronunciation:3, question:0,
+  really:0, shiny:0, sister:0, story:0, study:0, table:0,
+  teacher:0, tiny:0, today:1, together:1, treasure:0, turtle:0,
+  under:0, university:3, usual:0, vegetable:0, very:0,
+  water:0, weather:0, wonderful:0, yogurt:0, yummy:0, zebra:0,
+}
+
 // Azure (en-US) returns lowercase ARPAbet-like phoneme names → IPA
 const AZURE_TO_IPA_EN = {
   iy: 'iː', ih: 'ɪ', eh: 'ɛ', ae: 'æ', ah: 'ʌ', uw: 'uː', uh: 'ʊ',
@@ -306,5 +329,31 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
     ? Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
     : overallScore
 
-  return { phonemes: scored, overall, spokenWord }
+  // Syllable stress detection — English only, words with ≥ 2 vowel phonemes
+  let stress = null
+  if (language === 'en-US') {
+    const allVowels = scored.filter(p => VOWEL_IPA_SET.has(p.ipa))
+    const expectedIdx = EN_STRESS_IDX[targetWord.toLowerCase()]
+    if (allVowels.length >= 2 && expectedIdx !== undefined) {
+      const vowelsWithTiming = allVowels.filter(p => p.audioDuration !== null && p.audioDuration > 0)
+      if (vowelsWithTiming.length >= 2) {
+        const longest = vowelsWithTiming.reduce((a, b) => (b.audioDuration > a.audioDuration ? b : a))
+        const detectedIdx = allVowels.indexOf(longest)
+        const correct = detectedIdx === expectedIdx
+        stress = {
+          correct,
+          detected: detectedIdx,
+          expected: expectedIdx,
+          score: correct ? 100 : 30,
+          detectedIpa: allVowels[detectedIdx]?.ipa,
+          expectedIpa: allVowels[expectedIdx]?.ipa,
+          note: correct
+            ? 'Trọng âm đúng ✓'
+            : `Cần nhấn mạnh âm /${allVowels[expectedIdx]?.ipa}/ (âm thứ ${expectedIdx + 1})`,
+        }
+      }
+    }
+  }
+
+  return { phonemes: scored, overall, spokenWord, stress }
 }
