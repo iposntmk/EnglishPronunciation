@@ -525,6 +525,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const speechRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
+  const blobRef = useRef(null)
 
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
@@ -543,6 +544,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           stream.getTracks().forEach(t => t.stop())
           if (chunks.length === 0) { setErrorMsg('Không ghi được âm thanh. Thử lại.'); setPhase('ready'); return }
           const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
+          blobRef.current = blob
           setRecordingUrl(URL.createObjectURL(blob))
           setPhase('scoring')
           try {
@@ -577,10 +579,26 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
+  const playPhoneme = useCallback(async (p) => {
+    if (!blobRef.current || p.audioOffset === null) return
+    try {
+      const ab = await blobRef.current.arrayBuffer()
+      const ctx = new AudioContext()
+      const buf = await ctx.decodeAudioData(ab)
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      const dur = p.audioDuration > 0.02 ? p.audioDuration : undefined
+      src.start(0, p.audioOffset, dur)
+      src.onended = () => ctx.close()
+    } catch (e) { /* ignore */ }
+  }, [])
+
   const reset = () => {
     clearTimeout(timeoutRef.current)
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
+    blobRef.current = null
     setPhase('ready'); setResult(null); setSelectedIdx(null)
     setRecordingUrl(null); setIsPlayingBack(false); setErrorMsg(null)
   }
@@ -634,7 +652,16 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           <div className={`mt-3 mx-4 rounded-2xl p-3 border text-left ${scoreBg(sel.score)}`}>
             <div className="flex items-center justify-between mb-1">
               <span className="text-white font-semibold">{sel.text} <span className="text-white/40 font-mono text-sm">/{sel.ipa}/</span></span>
-              <span className={`font-bold ${scoreColor(sel.score)}`}>{sel.score}%</span>
+              <div className="flex items-center gap-2">
+                {sel.audioOffset !== null && (
+                  <button onClick={() => playPhoneme(sel)}
+                    className="flex items-center gap-1 bg-white/10 hover:bg-white/20 rounded-lg px-2 py-1 text-white/70 text-xs active:scale-95 transition-transform">
+                    <Play size={11} className="fill-white/70 text-white/70" />
+                    Bạn nói
+                  </button>
+                )}
+                <span className={`font-bold ${scoreColor(sel.score)}`}>{sel.score}%</span>
+              </div>
             </div>
             {sel.note && <p className="text-red-300 text-sm mb-1">{sel.note}</p>}
             <p className="text-white/70 text-sm">{sel.tip}</p>

@@ -219,22 +219,32 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   // Scores are directly on NBest[0], not nested under PronunciationAssessment
   const overallScore = Math.round(nbest?.PronScore ?? nbest?.AccuracyScore ?? 0)
 
-  // Build IPA → score map from Azure per-phoneme data
+  // Build IPA → score + timing maps from Azure per-phoneme data
   const azurePhonemes = nbest?.Words?.[0]?.Phonemes || []
   const ipaScoreMap = {}
+  const ipaTimingMap = {} // ipa → { offset, duration } in seconds
   for (const ap of azurePhonemes) {
     const ipa = AZURE_TO_IPA[ap.Phoneme?.toLowerCase()]
     if (!ipa) continue
-    // Scores are directly on phoneme object
     const s = ap.AccuracyScore ?? ap.PronunciationAssessment?.AccuracyScore ?? 0
-    if (!(ipa in ipaScoreMap) || s > ipaScoreMap[ipa]) ipaScoreMap[ipa] = s
+    if (!(ipa in ipaScoreMap) || s > ipaScoreMap[ipa]) {
+      ipaScoreMap[ipa] = s
+      // Azure Offset/Duration are in 100-nanosecond units
+      ipaTimingMap[ipa] = {
+        offset: (ap.Offset ?? 0) / 10_000_000,
+        duration: (ap.Duration ?? 0) / 10_000_000,
+      }
+    }
   }
 
   const scored = phonemes.map(p => {
     const score = p.ipa in ipaScoreMap ? Math.round(ipaScoreMap[p.ipa]) : overallScore
+    const timing = ipaTimingMap[p.ipa] ?? null
     return {
       ...p,
       score,
+      audioOffset: timing?.offset ?? null,
+      audioDuration: timing?.duration ?? null,
       note: score < 60 ? `Âm /${p.ipa}/ cần luyện thêm` : null,
     }
   })
