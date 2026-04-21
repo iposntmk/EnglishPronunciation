@@ -388,14 +388,40 @@ const WORD_IPA_RAW = {
   learning:[['learn','lɜːrn'],['ing','ɪŋ']],
 }
 
+// Primary stress index (0-based) within the WORD_IPA_RAW phoneme array.
+// Only multi-syllable words are listed; single-syllable words need no ˈ mark.
+const WORD_STRESS_IDX = {
+  // stress on 2nd group
+  about: 1, again: 1, another: 1, banana: 1, because: 1, before: 1,
+  enjoy: 1, enough: 1, hello: 1, today: 1, together: 1, without: 1,
+  // stress on 1st group (most 2-syllable nouns / adjectives)
+  after: 0, also: 0, always: 0, answer: 0, baby: 0, better: 0, brother: 0,
+  butter: 0, candy: 0, careful: 0, cheddar: 0, city: 0, city_tap: 0,
+  different: 0, dinner: 0, dollar: 0, every: 0, family: 0, father: 0,
+  flower: 0, funny: 0, furry: 0, future: 0, gentle: 0, giant: 0, giggly: 0,
+  happy: 0, hippo: 0, knowledge: 0, language: 0, lazy: 0, learning: 0,
+  lemon: 0, little: 0, measure: 0, morning: 0, mother: 0, muddy: 0,
+  music: 0, nature: 0, necklace: 0, nothing: 0, often: 0, only: 0,
+  open: 0, other: 0, people: 0, photo: 0, pretty: 0, prickly: 0,
+  problem: 0, question: 0, really: 0, shiny: 0, sister: 0, story: 0,
+  study: 0, sweater: 0, table: 0, teacher: 0, tiny: 0, treasure: 0,
+  turtle: 0, under: 0, very: 0, vision: 0, vital: 0, water: 0,
+  weather: 0, wonderful: 0, yogurt: 0, yummy: 0, zebra: 0,
+  // 3+ syllable words
+  beautiful: 0, computer: 1, important: 1, lollipop: 0,
+  pronunciation: 3, university: 2, usual: 0, vegetable: 0,
+}
+
 function lookupWord(word) {
   const w = word.toLowerCase().trim().replace(/[^a-z]/g, '')
   const raw = WORD_IPA_RAW[w]
   if (raw) {
-    return raw.map(([text, ipa]) => ({
+    const stressIdx = WORD_STRESS_IDX[w] ?? -1
+    return raw.map(([text, ipa], i) => ({
       text, ipa,
       tip: PHONEME_INFO[ipa]?.tip || `Âm /${ipa}/`,
       isHard: PHONEME_INFO[ipa]?.hard || false,
+      isStressed: i === stressIdx,
     }))
   }
   return g2p(w)
@@ -474,7 +500,7 @@ function g2p(word) {
   }
   return out
     .filter(p => p.ipa && p.ipa !== '∅')
-    .map(p => ({ ...p, tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`, isHard: PHONEME_INFO[p.ipa]?.hard || false }))
+    .map(p => ({ ...p, tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`, isHard: PHONEME_INFO[p.ipa]?.hard || false, isStressed: false }))
 }
 
 
@@ -485,6 +511,7 @@ function buildPhonemes(pairs, infoMap) {
       text, ipa,
       tip: infoMap[ipa]?.tip || `/${ipa}/`,
       isHard: infoMap[ipa]?.hard || false,
+      isStressed: false,
       audioOffset: null,
       audioDuration: null,
     }))
@@ -634,7 +661,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
           <Volume2 size={22} className="text-white/40" />
         </button>
         <div className="text-white/50 text-sm mt-1">{meaning}</div>
-        <div className="text-white/35 font-mono text-sm mt-0.5">/{phonemes.map(p => p.ipa).join('')}/</div>
+        <div className="text-white/35 font-mono text-sm mt-0.5">/{phonemes.map(p => (p.isStressed ? 'ˈ' : '') + p.ipa).join('')}/</div>
 
         <div className="flex flex-wrap justify-center gap-2 mt-4">
           {phonemes.map((p, idx) => {
@@ -648,7 +675,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
                 className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all ${bg} ${hasScore ? 'cursor-pointer active:scale-95' : 'cursor-default'} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
               >
                 <span className="text-white font-semibold text-sm">{p.text}</span>
-                <span className="text-white/40 font-mono text-xs">/{p.ipa}/</span>
+                <span className="text-white/40 font-mono text-xs">/{p.isStressed ? 'ˈ' : ''}{p.ipa}/</span>
                 {hasScore && <span className={`text-xs font-bold ${tc}`}>{r.score}%</span>}
                 {p.isHard && !hasScore && <span className="text-yellow-400 text-xs">★</span>}
               </button>
@@ -707,7 +734,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
       )}
 
       {/* Nút điều khiển */}
-      <div className="px-4 pb-6 mt-auto flex flex-col gap-3">
+      <div className="px-4 pb-4 mt-auto flex flex-col gap-3">
 
         {errorMsg && (
           <div className="bg-red-500/15 border border-red-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
@@ -927,7 +954,7 @@ function SoundLibraryScreen({ lang, onSelectSound, onGoDict, onChangeLang }) {
 function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
   const azureCode = LANG_CONFIG[lang]?.azureCode || 'en-US'
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-10">
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
       {/* Back */}
       <div className="px-4 pt-6 pb-2 flex items-center gap-3">
         <button onClick={onBack} className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-white/70 hover:bg-white/10 transition-colors">
@@ -1014,7 +1041,7 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
 
 function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBack, onNext, onPrev }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a]">
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
       <div className="px-4 pt-6 pb-2 flex items-center gap-3">
         <button onClick={onBack} className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-white/70 hover:bg-white/10 transition-colors">
           <ChevronLeft size={20} />
@@ -1039,14 +1066,14 @@ function DictionaryScreen({ onBack }) {
 
   if (activeWord) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a]">
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
         <div className="px-4 pt-6 pb-2 flex items-center gap-3">
           <button onClick={() => setActiveWord(null)} className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-white/70">
             <ChevronLeft size={20} />
           </button>
           <span className="text-white/50 text-sm">Từ điển phát âm</span>
         </div>
-        <PronunciationPractice word={activeWord} meaning="" emoji="📖" onBack={() => setActiveWord(null)} />
+        <PronunciationPractice key={activeWord} word={activeWord} meaning="" emoji="📖" onBack={() => setActiveWord(null)} />
       </div>
     )
   }
@@ -1164,9 +1191,7 @@ export default function App() {
       {screen === 'dictionary' && (
         <DictionaryScreen onBack={() => handleNavigate('library')} />
       )}
-      {(screen === 'library' || screen === 'dictionary') && (
-        <BottomNav screen={screen} onNavigate={handleNavigate} />
-      )}
+      <BottomNav screen={screen} onNavigate={handleNavigate} />
     </div>
   )
 }
