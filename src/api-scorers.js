@@ -236,6 +236,7 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   const assessmentHeader = btoa(JSON.stringify(assessmentCfg)).replace(/[\r\n]/g, '')
 
   const url = `https://${cleanRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(language)}&format=detailed`
+  console.log('[Azure] POST', url, '| word:', targetWord, '| keyLen:', cleanKey.length, '| keyPrefix:', cleanKey.slice(0, 6) + '...')
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
@@ -245,9 +246,11 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
     },
     body: wavBlob,
   })
+  console.log('[Azure] response status:', resp.status, resp.statusText)
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '')
+    console.error('[Azure] error body:', txt)
     const hint = resp.status === 401
       ? ' — Key sai hoặc hết hạn. Kiểm tra lại GitHub Secret AZUREKEY.'
       : resp.status === 403 ? ' — Không có quyền truy cập resource.'

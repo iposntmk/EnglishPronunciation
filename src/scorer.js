@@ -211,6 +211,7 @@ async function scoreWordOffline(audioBlob, phonemes) {
 export async function scoreWord(audioBlob, phonemes, language = 'en-US') {
   const key = import.meta.env.VITE_AZURE_KEY
   const region = import.meta.env.VITE_AZURE_REGION || 'southeastasia'
+  console.log('[Azure] key defined:', !!key, '| key length:', key?.length ?? 0, '| region:', region, '| lang:', language)
   if (!key) throw new Error('Azure key chưa được cấu hình (VITE_AZURE_KEY)')
   const { scoreWordAzure } = await import('./api-scorers.js')
   return scoreWordAzure(audioBlob, phonemes, key, region, language)
