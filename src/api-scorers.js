@@ -169,14 +169,17 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
     Dimension: 'Comprehensive',
     EnableMiscue: true,
   }
-  const assessmentHeader = btoa(unescape(encodeURIComponent(JSON.stringify(assessmentCfg))))
+  // Strip any CR/LF that btoa may insert; also trim key to avoid whitespace from secrets
+  const cleanKey = subscriptionKey.trim().replace(/[\r\n]/g, '')
+  const cleanRegion = region.trim().replace(/[\r\n]/g, '')
+  const assessmentHeader = btoa(JSON.stringify(assessmentCfg)).replace(/[\r\n]/g, '')
 
-  const url = `https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US&format=detailed`
+  const url = `https://${cleanRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US&format=detailed`
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
-      'Ocp-Apim-Subscription-Key': subscriptionKey,
-      'Content-Type': 'audio/wav; codecs=audio/pcm; samplerate=16000',
+      'Ocp-Apim-Subscription-Key': cleanKey,
+      'Content-Type': 'audio/wav',
       'Pronunciation-Assessment': assessmentHeader,
     },
     body: wavBlob,
