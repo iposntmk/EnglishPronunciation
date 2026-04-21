@@ -480,3 +480,293 @@ export const CONSONANT_GROUPS = [
   { label: 'Affricates',    key: 'Affricates',     count: 2 },
   { label: 'Tap',           key: 'Tap',            count: 1 },
 ]
+
+// ─── SPANISH PHONEME INFO ──────────────────────────────────────────────────
+// phoneme IPA → { tip (Vietnamese), hard }
+export const SPANISH_PHONEME_INFO = {
+  'a':  { tip: 'Âm "a" thuần — mở miệng rộng, lưỡi thấp. Không thay đổi chất âm như tiếng Anh', hard: false },
+  'e':  { tip: 'Âm "ê" thuần — lưỡi giữa-cao, môi hơi kéo. Không trượt lên /i/ như tiếng Anh', hard: false },
+  'i':  { tip: 'Âm "i" thuần — lưỡi cao phía trước, môi kéo sang ngang', hard: false },
+  'o':  { tip: 'Âm "ô" thuần — môi tròn vừa, lưỡi giữa-sau. Không trượt lên /u/ như tiếng Anh', hard: false },
+  'u':  { tip: 'Âm "u" thuần — môi tròn căng, lưỡi sau cao', hard: false },
+  'ɾ':  { tip: 'Chạm nhẹ đầu lưỡi vào vòm một lần — như "đ" nhanh. Dùng khi "r" đứng giữa hai nguyên âm', hard: false },
+  'r':  { tip: 'Rung đầu lưỡi nhiều lần liên tiếp (trill) — khó nhất tiếng Tây Ban Nha! Đặt lưỡi gần vòm, thổi hơi qua', hard: true },
+  'x':  { tip: 'Thổi khí mạnh qua cổ họng phía sau — như hắng giọng. Âm này không có trong tiếng Việt!', hard: true },
+  'ɲ':  { tip: 'Giống "nh" trong tiếng Việt — lưỡi chạm vòm giữa, âm mũi. Dễ với người Việt!', hard: false },
+  'j':  { tip: 'Âm "y" (bán nguyên âm) — lưỡi cao phía trước, không chạm vòm. Như "y" trong "yes"', hard: false },
+  'β':  { tip: 'Môi trên và môi dưới gần nhau, thổi hơi qua khe giữa — nhẹ hơn /b/ tiếng Việt', hard: true },
+  'tʃ': { tip: 'Âm "ch" — lưỡi chạm vòm rồi mở ra thổi. Như "ch" trong tiếng Anh "church"', hard: false },
+  'n':  { tip: 'Đầu lưỡi chạm sau răng cửa trên, âm mũi — như "n" tiếng Việt', hard: false },
+  'm':  { tip: 'Khép môi, rung âm mũi — như "m" tiếng Việt', hard: false },
+  'l':  { tip: 'Đầu lưỡi chạm sau răng trên — như "l" tiếng Việt', hard: false },
+  'p':  { tip: 'Bật môi — ít bật hơi hơn tiếng Anh, gần giống "p" tiếng Việt', hard: false },
+  'b':  { tip: 'Bật môi, rung họng — như "b" tiếng Việt', hard: false },
+  't':  { tip: 'Lưỡi chạm sau răng (dental) — như "t" tiếng Việt, không bật hơi', hard: false },
+  'd':  { tip: 'Lưỡi chạm sau răng, rung họng — như "đ" tiếng Việt', hard: false },
+  'k':  { tip: 'Lưỡi chạm vòm mềm, bật ra — như "c/k" tiếng Việt', hard: false },
+  'g':  { tip: 'Lưỡi chạm vòm mềm, rung họng — như "g" tiếng Việt', hard: false },
+  'f':  { tip: 'Răng trên đặt lên môi dưới, thổi khí — như "ph" tiếng Việt', hard: false },
+  's':  { tip: 'Đầu lưỡi gần răng, thổi khí — như "s/x" tiếng Việt', hard: false },
+  'ʎ':  { tip: 'Lưỡi phẳng chạm vòm giữa, âm bên — như "l" nhưng lưỡi rộng hơn', hard: true },
+  'gw': { tip: 'Âm "gu" — /g/ + bán nguyên âm /w/', hard: false },
+  'je': { tip: 'Diphthong ie — /j/ trượt thành /e/, miệng mở dần', hard: false },
+  'h':  { tip: 'Câm trong tiếng Tây Ban Nha — không phát âm', hard: false },
+}
+
+// ─── SPANISH SOUNDS (18 âm) ───────────────────────────────────────────────
+export const SPANISH_SOUNDS = [
+  // ════ NGUYÊN ÂM ═══════════════════════════════════════════
+  { id:'ES_A', label:'a', ipa:'a', type:'vowel', group:'Nguyên Âm',
+    color:'bg-red-700', grad:'from-red-700 to-red-900', hard:false,
+    tip:'Âm "a" thuần — mở miệng rộng, lưỡi thấp phẳng. Ngắn và rõ, không thay đổi chất âm',
+    words:[
+      {word:'casa',  meaning:'ngôi nhà', emoji:'🏠', phonemes:[['c','k'],['a','a'],['s','s'],['a','a']]},
+      {word:'mano',  meaning:'bàn tay',  emoji:'✋', phonemes:[['m','m'],['a','a'],['n','n'],['o','o']]},
+      {word:'sala',  meaning:'phòng khách',emoji:'🛋️', phonemes:[['s','s'],['a','a'],['l','l'],['a','a']]},
+    ]},
+  { id:'ES_E', label:'e', ipa:'e', type:'vowel', group:'Nguyên Âm',
+    color:'bg-pink-600', grad:'from-pink-600 to-pink-800', hard:false,
+    tip:'Âm "ê" thuần — lưỡi giữa-cao, không trượt. Khác tiếng Anh: không biến thành /eɪ/',
+    words:[
+      {word:'mesa',  meaning:'cái bàn',  emoji:'🪑', phonemes:[['m','m'],['e','e'],['s','s'],['a','a']]},
+      {word:'verde', meaning:'màu xanh lá',emoji:'🟢', phonemes:[['v','β'],['e','e'],['r','ɾ'],['d','d'],['e','e']]},
+      {word:'tres',  meaning:'số ba',    emoji:'3️⃣', phonemes:[['tr','tr'],['e','e'],['s','s']]},
+    ]},
+  { id:'ES_I', label:'i', ipa:'i', type:'vowel', group:'Nguyên Âm',
+    color:'bg-purple-700', grad:'from-purple-700 to-purple-900', hard:false,
+    tip:'Âm "i" thuần — lưỡi cao phía trước. Sạch hơn /iː/ tiếng Anh: ngắn và nhất quán',
+    words:[
+      {word:'libro',  meaning:'cuốn sách',emoji:'📖', phonemes:[['l','l'],['i','i'],['br','βr'],['o','o']]},
+      {word:'piso',   meaning:'tầng/sàn', emoji:'🏢', phonemes:[['p','p'],['i','i'],['s','s'],['o','o']]},
+      {word:'rico',   meaning:'ngon/giàu',emoji:'😋', phonemes:[['r','ɾ'],['i','i'],['c','k'],['o','o']]},
+    ]},
+  { id:'ES_O', label:'o', ipa:'o', type:'vowel', group:'Nguyên Âm',
+    color:'bg-teal-600', grad:'from-teal-600 to-teal-800', hard:false,
+    tip:'Âm "ô" thuần — môi tròn vừa, lưỡi giữa-sau. Không trượt lên /u/ như "go" tiếng Anh',
+    words:[
+      {word:'boca',  meaning:'cái miệng',emoji:'👄', phonemes:[['b','b'],['o','o'],['c','k'],['a','a']]},
+      {word:'moto',  meaning:'xe máy',   emoji:'🏍️', phonemes:[['m','m'],['o','o'],['t','t'],['o','o']]},
+      {word:'sol',   meaning:'mặt trời', emoji:'☀️', phonemes:[['s','s'],['o','o'],['l','l']]},
+    ]},
+  { id:'ES_U', label:'u', ipa:'u', type:'vowel', group:'Nguyên Âm',
+    color:'bg-cyan-600', grad:'from-cyan-600 to-cyan-800', hard:false,
+    tip:'Âm "u" thuần — môi tròn căng, lưỡi sau. Sạch và ngắn hơn /uː/ tiếng Anh',
+    words:[
+      {word:'luna',  meaning:'mặt trăng',emoji:'🌙', phonemes:[['l','l'],['u','u'],['n','n'],['a','a']]},
+      {word:'mucho', meaning:'rất nhiều',emoji:'💯', phonemes:[['m','m'],['u','u'],['ch','tʃ'],['o','o']]},
+      {word:'gusto', meaning:'niềm vui', emoji:'😊', phonemes:[['g','g'],['u','u'],['s','s'],['t','t'],['o','o']]},
+    ]},
+  // ════ PHỤ ÂM THÔNG THƯỜNG ══════════════════════════════════
+  { id:'ES_N', label:'n', ipa:'n', type:'consonant', group:'Phụ Âm Thông Thường',
+    color:'bg-blue-700', grad:'from-blue-700 to-blue-900', hard:false,
+    tip:'Đầu lưỡi chạm sau răng cửa trên, âm mũi — như "n" tiếng Việt',
+    words:[
+      {word:'nada',  meaning:'không gì', emoji:'🚫', phonemes:[['n','n'],['a','a'],['d','d'],['a','a']]},
+      {word:'pan',   meaning:'bánh mì',  emoji:'🍞', phonemes:[['p','p'],['a','a'],['n','n']]},
+      {word:'noche', meaning:'đêm tối',  emoji:'🌙', phonemes:[['n','n'],['o','o'],['ch','tʃ'],['e','e']]},
+    ]},
+  { id:'ES_L', label:'l', ipa:'l', type:'consonant', group:'Phụ Âm Thông Thường',
+    color:'bg-indigo-700', grad:'from-indigo-700 to-indigo-900', hard:false,
+    tip:'Đầu lưỡi chạm sau răng trên — giống "l" tiếng Việt nhưng rõ hơn ở cuối từ',
+    words:[
+      {word:'largo', meaning:'dài',      emoji:'📏', phonemes:[['l','l'],['a','a'],['r','ɾ'],['g','g'],['o','o']]},
+      {word:'bola',  meaning:'quả bóng', emoji:'⚽', phonemes:[['b','b'],['o','o'],['l','l'],['a','a']]},
+      {word:'sol',   meaning:'mặt trời', emoji:'☀️', phonemes:[['s','s'],['o','o'],['l','l']]},
+    ]},
+  { id:'ES_CH', label:'ch', ipa:'tʃ', type:'consonant', group:'Phụ Âm Thông Thường',
+    color:'bg-green-700', grad:'from-green-700 to-green-900', hard:false,
+    tip:'Âm "ch" — lưỡi chạm vòm rồi mở ra thổi hơi. Như "ch" tiếng Anh nhưng không bật mạnh',
+    words:[
+      {word:'chico', meaning:'cậu bé',   emoji:'👦', phonemes:[['ch','tʃ'],['i','i'],['c','k'],['o','o']]},
+      {word:'leche', meaning:'sữa',      emoji:'🥛', phonemes:[['l','l'],['e','e'],['ch','tʃ'],['e','e']]},
+      {word:'noche', meaning:'buổi tối', emoji:'🌙', phonemes:[['n','n'],['o','o'],['ch','tʃ'],['e','e']]},
+    ]},
+  // ════ PHỤ ÂM ĐẶC BIỆT ══════════════════════════════════════
+  { id:'ES_R1', label:'r', ipa:'ɾ', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-amber-600', grad:'from-amber-600 to-amber-800', hard:false,
+    tip:'Tap r — chạm nhẹ đầu lưỡi vào vòm một lần. Dùng khi "r" đứng giữa nguyên âm, ngắn và nhẹ',
+    words:[
+      {word:'cara',  meaning:'khuôn mặt',emoji:'😊', phonemes:[['c','k'],['a','a'],['r','ɾ'],['a','a']]},
+      {word:'pero',  meaning:'nhưng',    emoji:'↔️', phonemes:[['p','p'],['e','e'],['r','ɾ'],['o','o']]},
+      {word:'caro',  meaning:'đắt tiền', emoji:'💰', phonemes:[['c','k'],['a','a'],['r','ɾ'],['o','o']]},
+    ]},
+  { id:'ES_RR', label:'rr', ipa:'r', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-orange-700', grad:'from-orange-700 to-orange-900', hard:true,
+    tip:'Trill r — rung đầu lưỡi nhiều lần liên tiếp. Âm khó nhất! Tập bằng cách nói "ddddd" nhanh với lưỡi gần vòm',
+    words:[
+      {word:'perro',  meaning:'con chó',  emoji:'🐕', phonemes:[['p','p'],['e','e'],['rr','r'],['o','o']]},
+      {word:'tierra', meaning:'đất đai',  emoji:'🌍', phonemes:[['t','t'],['ie','je'],['rr','r'],['a','a']]},
+      {word:'carro',  meaning:'xe hơi',   emoji:'🚗', phonemes:[['c','k'],['a','a'],['rr','r'],['o','o']]},
+    ]},
+  { id:'ES_J', label:'j', ipa:'x', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-rose-700', grad:'from-rose-700 to-rose-900', hard:true,
+    tip:'Velar fricative — thổi khí mạnh qua cổ họng phía sau, như hắng giọng. Không có trong tiếng Việt!',
+    words:[
+      {word:'jamón', meaning:'giăm bông', emoji:'🍖', phonemes:[['j','x'],['a','a'],['m','m'],['ó','o'],['n','n']]},
+      {word:'ojo',   meaning:'con mắt',   emoji:'👁️', phonemes:[['o','o'],['j','x'],['o','o']]},
+      {word:'rojo',  meaning:'màu đỏ',    emoji:'🔴', phonemes:[['r','ɾ'],['o','o'],['j','x'],['o','o']]},
+    ]},
+  { id:'ES_Ñ', label:'ñ', ipa:'ɲ', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-violet-700', grad:'from-violet-700 to-violet-900', hard:false,
+    tip:'Palatal nasal — như "nh" trong tiếng Việt (nhà, nhớ). Dễ với người Việt! Lưỡi chạm vòm giữa + âm mũi',
+    words:[
+      {word:'niño',  meaning:'đứa trẻ',  emoji:'👦', phonemes:[['n','n'],['i','i'],['ñ','ɲ'],['o','o']]},
+      {word:'año',   meaning:'năm',      emoji:'📅', phonemes:[['a','a'],['ñ','ɲ'],['o','o']]},
+      {word:'baño',  meaning:'phòng tắm',emoji:'🚿', phonemes:[['b','b'],['a','a'],['ñ','ɲ'],['o','o']]},
+    ]},
+  { id:'ES_Y', label:'y/ll', ipa:'j', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-emerald-700', grad:'from-emerald-700 to-emerald-900', hard:false,
+    tip:'Palatal glide — như âm "y" trong tiếng Anh "yes". Trong tiếng Tây Ban Nha hiện đại, "ll" và "y" phát âm như nhau',
+    words:[
+      {word:'ya',    meaning:'rồi/đã',   emoji:'✅', phonemes:[['y','j'],['a','a']]},
+      {word:'mayo',  meaning:'tháng 5',  emoji:'🗓️', phonemes:[['m','m'],['a','a'],['y','j'],['o','o']]},
+      {word:'llama', meaning:'ngọn lửa', emoji:'🔥', phonemes:[['ll','j'],['a','a'],['m','m'],['a','a']]},
+    ]},
+]
+
+export const SPANISH_VOWEL_GROUPS    = [{ key:'Nguyên Âm',         label:'Nguyên Âm · 5 âm thuần' }]
+export const SPANISH_CONSONANT_GROUPS = [
+  { key:'Phụ Âm Thông Thường', label:'Phụ Âm Thông Thường' },
+  { key:'Phụ Âm Đặc Biệt',    label:'Phụ Âm Đặc Biệt ★' },
+]
+
+// ─── ITALIAN PHONEME INFO ──────────────────────────────────────────────────
+export const ITALIAN_PHONEME_INFO = {
+  'a':  { tip: 'Âm "a" thuần — mở miệng rộng, lưỡi thấp. Giống "a" tiếng Việt', hard: false },
+  'e':  { tip: 'Âm "ê" — có thể đóng /e/ hoặc mở /ɛ/ tùy từ. Ngắn và rõ ràng', hard: false },
+  'i':  { tip: 'Âm "i" thuần — lưỡi cao phía trước, môi kéo sang ngang', hard: false },
+  'o':  { tip: 'Âm "ô" — có thể đóng /o/ hoặc mở /ɔ/ tùy từ', hard: false },
+  'u':  { tip: 'Âm "u" thuần — môi tròn căng, lưỡi sau', hard: false },
+  'r':  { tip: 'Trill r — rung đầu lưỡi vào vòm 1-2 lần. Nhẹ hơn tiếng Tây Ban Nha nhưng vẫn phải rung!', hard: true },
+  'ʎ':  { tip: 'Palatal lateral — lưỡi phẳng rộng chạm vòm miệng, âm bên. Như "lj" nói rất nhanh. Không có trong tiếng Việt!', hard: true },
+  'ɲ':  { tip: 'Palatal nasal — như "nh" trong tiếng Việt (nhà, nhớ). Dễ với người Việt!', hard: false },
+  'ts': { tip: 'Affricate ts — bắt đầu /t/ rồi chuyển ngay sang /s/. Như "c" trong "pizza" đọc "pit-tsa"', hard: true },
+  'dz': { tip: 'Affricate dz — bắt đầu /d/ rồi chuyển sang /z/. Biến thể rung của /ts/', hard: true },
+  'ʃ':  { tip: 'Âm "sh" — chu môi nhẹ, thổi hơi. Như "sc" trước "e/i" trong tiếng Ý', hard: false },
+  'tʃ': { tip: 'Affricate ch — như "ch" tiếng Anh "church". "ci" trước nguyên âm = /tʃ/', hard: false },
+  'dʒ': { tip: 'Affricate dj — như "j" tiếng Anh "judge". "gi" trước nguyên âm = /dʒ/', hard: false },
+  'n':  { tip: 'Đầu lưỡi chạm sau răng, âm mũi — như "n" tiếng Việt', hard: false },
+  'm':  { tip: 'Khép môi, rung âm mũi — như "m" tiếng Việt', hard: false },
+  'l':  { tip: 'Đầu lưỡi chạm sau răng trên, âm bên — như "l" tiếng Việt', hard: false },
+  'p':  { tip: 'Bật môi không bật hơi — như "p" tiếng Việt', hard: false },
+  'b':  { tip: 'Bật môi, rung họng — như "b" tiếng Việt', hard: false },
+  't':  { tip: 'Lưỡi chạm sau răng (dental), không bật hơi — như "t" tiếng Việt', hard: false },
+  'd':  { tip: 'Lưỡi chạm sau răng, rung họng — như "đ" tiếng Việt', hard: false },
+  'k':  { tip: 'Lưỡi chạm vòm mềm, bật ra — như "c/k" tiếng Việt', hard: false },
+  'g':  { tip: 'Lưỡi chạm vòm mềm, rung họng — như "g" tiếng Việt', hard: false },
+  'f':  { tip: 'Răng trên + môi dưới, thổi khí — như "ph" tiếng Việt', hard: false },
+  'v':  { tip: 'Răng trên + môi dưới, rung họng — như "v" tiếng Việt', hard: false },
+  's':  { tip: 'Đầu lưỡi gần răng, thổi khí — như "s/x" tiếng Việt', hard: false },
+  'z':  { tip: 'Như /s/ nhưng rung họng — như "d" tiếng Việt trong một số thổ ngữ', hard: false },
+  'j':  { tip: 'Bán nguyên âm "y" — lưỡi cao phía trước', hard: false },
+  'w':  { tip: 'Bán nguyên âm "u" — môi tròn căng', hard: false },
+}
+
+// ─── ITALIAN SOUNDS (17 âm) ───────────────────────────────────────────────
+export const ITALIAN_SOUNDS = [
+  // ════ NGUYÊN ÂM ═══════════════════════════════════════════
+  { id:'IT_A', label:'a', ipa:'a', type:'vowel', group:'Nguyên Âm',
+    color:'bg-red-700', grad:'from-red-700 to-red-900', hard:false,
+    tip:'Âm "a" thuần — mở miệng rộng, lưỡi thấp. Giống "a" tiếng Việt, ngắn và rõ',
+    words:[
+      {word:'casa',  meaning:'ngôi nhà', emoji:'🏠', phonemes:[['c','k'],['a','a'],['s','s'],['a','a']]},
+      {word:'mare',  meaning:'biển',     emoji:'🌊', phonemes:[['m','m'],['a','a'],['r','r'],['e','e']]},
+      {word:'padre', meaning:'cha/bố',   emoji:'👨', phonemes:[['p','p'],['a','a'],['dr','dr'],['e','e']]},
+    ]},
+  { id:'IT_E', label:'e', ipa:'e', type:'vowel', group:'Nguyên Âm',
+    color:'bg-pink-600', grad:'from-pink-600 to-pink-800', hard:false,
+    tip:'Âm "ê" — có thể đóng /e/ hoặc mở /ɛ/ tùy từ. Ngắn và rõ, không trượt như tiếng Anh',
+    words:[
+      {word:'bene',  meaning:'tốt lắm',  emoji:'👍', phonemes:[['b','b'],['e','e'],['n','n'],['e','e']]},
+      {word:'verde', meaning:'màu xanh lá',emoji:'🟢', phonemes:[['v','v'],['e','e'],['r','r'],['d','d'],['e','e']]},
+      {word:'sera',  meaning:'buổi tối', emoji:'🌆', phonemes:[['s','s'],['e','e'],['r','r'],['a','a']]},
+    ]},
+  { id:'IT_I', label:'i', ipa:'i', type:'vowel', group:'Nguyên Âm',
+    color:'bg-purple-700', grad:'from-purple-700 to-purple-900', hard:false,
+    tip:'Âm "i" thuần — lưỡi cao phía trước. Ngắn và rõ ràng',
+    words:[
+      {word:'vino',   meaning:'rượu vang',emoji:'🍷', phonemes:[['v','v'],['i','i'],['n','n'],['o','o']]},
+      {word:'libro',  meaning:'cuốn sách',emoji:'📖', phonemes:[['l','l'],['i','i'],['br','br'],['o','o']]},
+      {word:'amico',  meaning:'bạn bè',   emoji:'🤝', phonemes:[['a','a'],['m','m'],['i','i'],['c','k'],['o','o']]},
+    ]},
+  { id:'IT_O', label:'o', ipa:'o', type:'vowel', group:'Nguyên Âm',
+    color:'bg-teal-600', grad:'from-teal-600 to-teal-800', hard:false,
+    tip:'Âm "ô" — môi tròn, lưỡi giữa-sau. Ngắn và thuần, không trượt lên /u/ như tiếng Anh',
+    words:[
+      {word:'sole',  meaning:'mặt trời', emoji:'☀️', phonemes:[['s','s'],['o','o'],['l','l'],['e','e']]},
+      {word:'bello', meaning:'đẹp',      emoji:'😍', phonemes:[['b','b'],['e','e'],['ll','l'],['o','o']]},
+      {word:'modo',  meaning:'cách thức',emoji:'💡', phonemes:[['m','m'],['o','o'],['d','d'],['o','o']]},
+    ]},
+  { id:'IT_U', label:'u', ipa:'u', type:'vowel', group:'Nguyên Âm',
+    color:'bg-cyan-600', grad:'from-cyan-600 to-cyan-800', hard:false,
+    tip:'Âm "u" thuần — môi tròn căng, lưỡi sau. Ngắn và rõ hơn /uː/ tiếng Anh',
+    words:[
+      {word:'uno',   meaning:'số một',   emoji:'1️⃣', phonemes:[['u','u'],['n','n'],['o','o']]},
+      {word:'luna',  meaning:'mặt trăng',emoji:'🌙', phonemes:[['l','l'],['u','u'],['n','n'],['a','a']]},
+      {word:'buono', meaning:'ngon/tốt', emoji:'😋', phonemes:[['b','b'],['uo','wo'],['n','n'],['o','o']]},
+    ]},
+  // ════ PHỤ ÂM THÔNG THƯỜNG ══════════════════════════════════
+  { id:'IT_SC', label:'sc', ipa:'ʃ', type:'consonant', group:'Phụ Âm Thông Thường',
+    color:'bg-blue-700', grad:'from-blue-700 to-blue-900', hard:false,
+    tip:'"sc" trước e/i = âm "sh". Chu môi nhẹ, thổi hơi qua — như "sh" trong tiếng Anh',
+    words:[
+      {word:'pesce',  meaning:'con cá',   emoji:'🐟', phonemes:[['p','p'],['e','e'],['sc','ʃ'],['e','e']]},
+      {word:'scena',  meaning:'cảnh/sân khấu',emoji:'🎭', phonemes:[['sc','ʃ'],['e','e'],['n','n'],['a','a']]},
+      {word:'uscire', meaning:'ra ngoài', emoji:'🚪', phonemes:[['u','u'],['sc','ʃ'],['i','i'],['r','r'],['e','e']]},
+    ]},
+  { id:'IT_CI', label:'ci/ce', ipa:'tʃ', type:'consonant', group:'Phụ Âm Thông Thường',
+    color:'bg-green-700', grad:'from-green-700 to-green-900', hard:false,
+    tip:'"c" trước i/e = /tʃ/ như "ch" tiếng Anh. Lưỡi chạm vòm, mở ra thổi — dễ nhớ!',
+    words:[
+      {word:'ciao',  meaning:'xin chào',  emoji:'👋', phonemes:[['c','tʃ'],['ia','ja'],['o','o']]},
+      {word:'cena',  meaning:'bữa tối',   emoji:'🍽️', phonemes:[['c','tʃ'],['e','e'],['n','n'],['a','a']]},
+      {word:'cielo', meaning:'bầu trời',  emoji:'☁️', phonemes:[['c','tʃ'],['ie','je'],['l','l'],['o','o']]},
+    ]},
+  // ════ PHỤ ÂM ĐẶC BIỆT ══════════════════════════════════════
+  { id:'IT_R', label:'r', ipa:'r', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-orange-700', grad:'from-orange-700 to-orange-900', hard:true,
+    tip:'Trill r — rung đầu lưỡi 1-2 lần vào vòm. Nhẹ hơn tiếng Tây Ban Nha nhưng phải rung. Khác hoàn toàn /r/ tiếng Anh!',
+    words:[
+      {word:'rosso', meaning:'màu đỏ',   emoji:'🔴', phonemes:[['r','r'],['o','o'],['ss','s'],['o','o']]},
+      {word:'raro',  meaning:'hiếm gặp', emoji:'💎', phonemes:[['r','r'],['a','a'],['r','r'],['o','o']]},
+      {word:'terra', meaning:'đất đai',  emoji:'🌍', phonemes:[['t','t'],['e','e'],['rr','r'],['a','a']]},
+    ]},
+  { id:'IT_GLI', label:'gli', ipa:'ʎ', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-rose-700', grad:'from-rose-700 to-rose-900', hard:true,
+    tip:'Palatal lateral — lưỡi rộng phẳng chạm vòm giữa, âm bên. Như "lj" nói rất nhanh. Không có trong tiếng Việt!',
+    words:[
+      {word:'figlio', meaning:'con trai', emoji:'👦', phonemes:[['f','f'],['i','i'],['gli','ʎ'],['o','o']]},
+      {word:'meglio', meaning:'tốt hơn', emoji:'⬆️', phonemes:[['m','m'],['e','e'],['gli','ʎ'],['o','o']]},
+      {word:'luglio', meaning:'tháng 7', emoji:'📅', phonemes:[['l','l'],['u','u'],['gli','ʎ'],['o','o']]},
+    ]},
+  { id:'IT_GN', label:'gn', ipa:'ɲ', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-violet-700', grad:'from-violet-700 to-violet-900', hard:false,
+    tip:'"gn" = /ɲ/ — như "nh" trong tiếng Việt (nhà, nhớ). Dễ với người Việt! Lưỡi chạm vòm giữa + âm mũi',
+    words:[
+      {word:'bagno',   meaning:'phòng tắm',emoji:'🚿', phonemes:[['b','b'],['a','a'],['gn','ɲ'],['o','o']]},
+      {word:'ogni',    meaning:'mỗi',      emoji:'🔄', phonemes:[['o','o'],['gn','ɲ'],['i','i']]},
+      {word:'gnocchi', meaning:'gnocchi',  emoji:'🍝', phonemes:[['gn','ɲ'],['o','o'],['cc','k'],['hi','i']]},
+    ]},
+  { id:'IT_Z', label:'z', ipa:'ts', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-amber-700', grad:'from-amber-700 to-amber-900', hard:true,
+    tip:'"z" = /ts/ hoặc /dz/ — bắt đầu /t/ rồi chuyển ngay sang /s/. Như "c" trong "pizza" = "pit-tsa"',
+    words:[
+      {word:'pizza',  meaning:'pizza',    emoji:'🍕', phonemes:[['p','p'],['i','i'],['zz','ts'],['a','a']]},
+      {word:'zero',   meaning:'số không', emoji:'0️⃣', phonemes:[['z','dz'],['e','e'],['r','r'],['o','o']]},
+      {word:'forza',  meaning:'sức mạnh', emoji:'💪', phonemes:[['f','f'],['o','o'],['r','r'],['z','ts'],['a','a']]},
+    ]},
+  { id:'IT_GI', label:'gi/ge', ipa:'dʒ', type:'consonant', group:'Phụ Âm Đặc Biệt',
+    color:'bg-emerald-700', grad:'from-emerald-700 to-emerald-900', hard:false,
+    tip:'"g" trước i/e = /dʒ/ như "j" tiếng Anh "judge". Lưỡi chạm vòm, rung họng',
+    words:[
+      {word:'giorno', meaning:'ngày',     emoji:'📅', phonemes:[['gi','dʒ'],['o','o'],['r','r'],['n','n'],['o','o']]},
+      {word:'gente',  meaning:'người',    emoji:'👥', phonemes:[['g','dʒ'],['e','e'],['n','n'],['t','t'],['e','e']]},
+      {word:'viaggio',meaning:'chuyến đi',emoji:'✈️', phonemes:[['v','v'],['ia','ja'],['ggi','dʒ'],['o','o']]},
+    ]},
+]
+
+export const ITALIAN_VOWEL_GROUPS    = [{ key:'Nguyên Âm',         label:'Nguyên Âm · 5 âm thuần' }]
+export const ITALIAN_CONSONANT_GROUPS = [
+  { key:'Phụ Âm Thông Thường', label:'Phụ Âm Thông Thường' },
+  { key:'Phụ Âm Đặc Biệt',    label:'Phụ Âm Đặc Biệt ★' },
+]

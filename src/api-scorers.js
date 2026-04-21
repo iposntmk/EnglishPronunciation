@@ -160,8 +160,10 @@ export async function scoreWordGoogleCloud(audioBlob, phonemes, apiKey) {
 
 // ─── AZURE SPEECH PRONUNCIATION ASSESSMENT ────────────────────────────────
 
+import { recordAzureUsage } from './azureUsage.js'
+
 // Azure (en-US) returns lowercase ARPAbet-like phoneme names → IPA
-const AZURE_TO_IPA = {
+const AZURE_TO_IPA_EN = {
   iy: 'iː', ih: 'ɪ', eh: 'ɛ', ae: 'æ', ah: 'ʌ', uw: 'uː', uh: 'ʊ',
   ao: 'ɔː', aa: 'ɑː', aw: 'aʊ', ay: 'aɪ', ow: 'oʊ', oy: 'ɔɪ',
   er: 'ɜː', ey: 'eɪ',
@@ -171,9 +173,37 @@ const AZURE_TO_IPA = {
   m: 'm', n: 'n', ng: 'ŋ', l: 'l', r: 'r', w: 'w', y: 'j',
 }
 
-export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, region) {
+// Azure es-ES phoneme IDs → IPA
+const AZURE_TO_IPA_ES = {
+  a: 'a', e: 'e', i: 'i', o: 'o', u: 'u',
+  p: 'p', b: 'b', B: 'β', t: 't', d: 'd', D: 'ð',
+  k: 'k', g: 'g', G: 'ɣ', f: 'f', s: 's', S: 'ʃ',
+  x: 'x', tS: 'tʃ', jj: 'j', y: 'j', j: 'j',
+  m: 'm', n: 'n', N: 'ɲ', l: 'l', L: 'ʎ',
+  r: 'ɾ', rr: 'r', R: 'r',
+  w: 'w',
+}
+
+// Azure it-IT phoneme IDs → IPA
+const AZURE_TO_IPA_IT = {
+  a: 'a', e: 'e', i: 'i', o: 'o', u: 'u',
+  p: 'p', b: 'b', t: 't', d: 'd', k: 'k', g: 'g',
+  f: 'f', v: 'v', s: 's', z: 'z',
+  tS: 'tʃ', dZ: 'dʒ', ts: 'ts', dz: 'dz',
+  S: 'ʃ', r: 'r', l: 'l', L: 'ʎ',
+  m: 'm', n: 'n', J: 'ɲ',
+  w: 'w', j: 'j',
+}
+
+const AZURE_PHONEME_MAPS = { 'en-US': AZURE_TO_IPA_EN, 'es-ES': AZURE_TO_IPA_ES, 'it-IT': AZURE_TO_IPA_IT }
+
+export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, region, language = 'en-US') {
   const wavBlob = await audioBlobToPcmWav(audioBlob)
   const targetWord = phonemes.map(p => p.text).join('')
+
+  // Track usage: WAV is 16kHz 16-bit mono → 2 bytes/sample
+  const wavDurationSeconds = wavBlob.size / (16000 * 2)
+  recordAzureUsage(wavDurationSeconds)
 
   const assessmentCfg = {
     ReferenceText: targetWord,
@@ -187,7 +217,7 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   const cleanRegion = region.trim().replace(/[\r\n]/g, '')
   const assessmentHeader = btoa(JSON.stringify(assessmentCfg)).replace(/[\r\n]/g, '')
 
-  const url = `https://${cleanRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US&format=detailed`
+  const url = `https://${cleanRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(language)}&format=detailed`
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
@@ -220,11 +250,13 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   const overallScore = Math.round(nbest?.PronScore ?? nbest?.AccuracyScore ?? 0)
 
   // Build IPA → score + timing maps from Azure per-phoneme data
+  const phonemeMap = AZURE_PHONEME_MAPS[language] || AZURE_TO_IPA_EN
   const azurePhonemes = nbest?.Words?.[0]?.Phonemes || []
   const ipaScoreMap = {}
   const ipaTimingMap = {} // ipa → { offset, duration } in seconds
   for (const ap of azurePhonemes) {
-    const ipa = AZURE_TO_IPA[ap.Phoneme?.toLowerCase()]
+    const rawId = ap.Phoneme || ''
+    const ipa = phonemeMap[rawId] || phonemeMap[rawId.toLowerCase()]
     if (!ipa) continue
     const s = ap.AccuracyScore ?? ap.PronunciationAssessment?.AccuracyScore ?? 0
     if (!(ipa in ipaScoreMap) || s > ipaScoreMap[ipa]) {

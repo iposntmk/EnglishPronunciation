@@ -208,9 +208,9 @@ async function scoreWordOffline(audioBlob, phonemes) {
   return { phonemes: scored, overall, spokenWord: spokenWord || phonemes.map(p => p.text).join('') }
 }
 
-export async function scoreWord(audioBlob, phonemes) {
+export async function scoreWord(audioBlob, phonemes, language = 'en-US') {
   const key = '8YhqF60IjVDMbHoDYdrUwww91g6KtGAMlUecA39hnUS5KOlXrVOWJQQJ99CDACqBBLyXJ3w3AAAYACOG1zyw'
   const region = 'southeastasia'
   const { scoreWordAzure } = await import('./api-scorers.js')
-  return scoreWordAzure(audioBlob, phonemes, key, region)
+  return scoreWordAzure(audioBlob, phonemes, key, region, language)
 }

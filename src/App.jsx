@@ -1,7 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
-import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
+import {
+  SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS,
+  SPANISH_SOUNDS, SPANISH_VOWEL_GROUPS, SPANISH_CONSONANT_GROUPS, SPANISH_PHONEME_INFO,
+  ITALIAN_SOUNDS, ITALIAN_VOWEL_GROUPS, ITALIAN_CONSONANT_GROUPS, ITALIAN_PHONEME_INFO,
+} from './data.js'
 import { scoreWord } from './scorer.js'
+import { getAzureUsageSummary } from './azureUsage.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -471,6 +476,19 @@ function g2p(word) {
 }
 
 
+// Build a phoneme array from a word's embedded [text, ipa] pairs + language phoneme info
+function buildPhonemes(pairs, infoMap) {
+  return pairs
+    .map(([text, ipa]) => ({
+      text, ipa,
+      tip: infoMap[ipa]?.tip || `/${ipa}/`,
+      isHard: infoMap[ipa]?.hard || false,
+      audioOffset: null,
+      audioDuration: null,
+    }))
+    .filter(p => p.ipa)
+}
+
 // ─── AUDIO HELPERS ────────────────────────────────────────────────────────
 
 function getSupportedMimeType() {
@@ -511,8 +529,8 @@ function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tố
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
 
-function PronunciationPractice({ word, meaning, emoji, onBack }) {
-  const phonemes = lookupWord(word)
+function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltPhonemes = null, onBack }) {
+  const phonemes = prebuiltPhonemes || lookupWord(word)
   // phases: ready → recording → scoring → result
   const [phase, setPhase] = useState('ready')
   const [errorMsg, setErrorMsg] = useState(null)
@@ -548,7 +566,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           setRecordingUrl(URL.createObjectURL(blob))
           setPhase('scoring')
           try {
-            const data = await scoreWord(blob, phonemes)
+            const data = await scoreWord(blob, phonemes, lang)
             setResult(data); setPhase('result')
           } catch (err) {
             setErrorMsg(`Lỗi chấm điểm: ${err.message}`); setPhase('ready')
@@ -774,25 +792,67 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
 // ─── SCREENS ──────────────────────────────────────────────────────────────
 
-function SoundLibraryScreen({ onSelectSound, onGoDict }) {
+const LANG_CONFIG = {
+  en: { label: '🇺🇸 EN', sounds: SOUNDS,        vowelGroups: VOWEL_GROUPS,          consonantGroups: CONSONANT_GROUPS,          azureCode: 'en-US', subtitle: '48 âm chuẩn tiếng Anh' },
+  es: { label: '🇪🇸 ES', sounds: SPANISH_SOUNDS, vowelGroups: SPANISH_VOWEL_GROUPS,  consonantGroups: SPANISH_CONSONANT_GROUPS,  azureCode: 'es-ES', subtitle: 'Tiếng Tây Ban Nha' },
+  it: { label: '🇮🇹 IT', sounds: ITALIAN_SOUNDS, vowelGroups: ITALIAN_VOWEL_GROUPS,  consonantGroups: ITALIAN_CONSONANT_GROUPS,  azureCode: 'it-IT', subtitle: 'Tiếng Ý' },
+}
+
+function AzureUsageBadge() {
+  const { used, total, pct } = getAzureUsageSummary()
+  const color = pct >= 90 ? 'text-red-400' : pct >= 70 ? 'text-yellow-400' : 'text-emerald-400'
+  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-emerald-500'
+  return (
+    <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-3 py-1.5">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-white/40 text-xs">Azure</span>
+          <span className={`text-xs font-semibold ${color}`}>{used.toFixed(2)}h / {total}h</span>
+        </div>
+        <div className="w-24 h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SoundLibraryScreen({ lang, onSelectSound, onGoDict, onChangeLang }) {
   const [tab, setTab] = useState('vowels')
-  const groups = tab === 'vowels' ? VOWEL_GROUPS : CONSONANT_GROUPS
-  const sounds = SOUNDS.filter(s => tab === 'vowels' ? s.type === 'vowel' : s.type === 'consonant')
+  const cfg = LANG_CONFIG[lang]
+  const groups = tab === 'vowels' ? cfg.vowelGroups : cfg.consonantGroups
+  const sounds = cfg.sounds.filter(s => tab === 'vowels' ? s.type === 'vowel' : s.type === 'consonant')
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
       {/* Header */}
-      <div className="px-4 pt-10 pb-4">
-        <h1 className="text-2xl font-bold text-white">Sound Library</h1>
-        <p className="text-white/40 text-sm">48 âm chuẩn tiếng Anh</p>
+      <div className="px-4 pt-10 pb-3">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Sound Library</h1>
+            <p className="text-white/40 text-sm">{cfg.subtitle}</p>
+          </div>
+          <AzureUsageBadge />
+        </div>
+        {/* Language selector */}
+        <div className="flex gap-2 mt-3">
+          {Object.entries(LANG_CONFIG).map(([key, c]) => (
+            <button key={key} onClick={() => { onChangeLang(key); setTab('vowels') }}
+              className={`flex-1 py-2 rounded-2xl text-sm font-semibold transition-all ${lang === key ? 'bg-white text-gray-900' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>
+              {c.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Tabs */}
+      {/* Vowel / Consonant tabs */}
       <div className="px-4 mb-4 flex gap-2">
         {['vowels','consonants'].map(t => (
           <button key={t} onClick={() => setTab(t)}
-            className={`flex-1 py-2.5 rounded-2xl font-semibold text-sm transition-all ${tab === t ? 'bg-white text-gray-900' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>
-            {t === 'vowels' ? `Nguyên Âm (${SOUNDS.filter(s=>s.type==='vowel').length})` : `Phụ Âm (${SOUNDS.filter(s=>s.type==='consonant').length})`}
+            className={`flex-1 py-2.5 rounded-2xl font-semibold text-sm transition-all ${tab === t ? 'bg-white/20 text-white' : 'bg-white/5 text-white/50 hover:bg-white/10'}`}>
+            {t === 'vowels'
+              ? `Nguyên Âm (${cfg.sounds.filter(s=>s.type==='vowel').length})`
+              : `Phụ Âm (${cfg.sounds.filter(s=>s.type==='consonant').length})`}
           </button>
         ))}
       </div>
@@ -824,7 +884,7 @@ function SoundLibraryScreen({ onSelectSound, onGoDict }) {
   )
 }
 
-function SoundDetailScreen({ sound, onBack, onPracticeWord }) {
+function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-10">
       {/* Back */}
@@ -852,36 +912,38 @@ function SoundDetailScreen({ sound, onBack, onPracticeWord }) {
         </div>
       </div>
 
-      {/* Rachel's English links */}
-      <div className="px-4 mb-6">
-        <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Học thêm</div>
-        <div className="flex flex-col gap-2">
-          {RACHEL_URLS[sound.ipa] && (
-            <a href={RACHEL_URLS[sound.ipa]} target="_blank" rel="noopener noreferrer"
+      {/* Learn more links (English only) */}
+      {lang === 'en' && (
+        <div className="px-4 mb-6">
+          <div className="text-white/60 text-xs uppercase tracking-wider mb-3 font-semibold">Học thêm</div>
+          <div className="flex flex-col gap-2">
+            {RACHEL_URLS[sound.ipa] && (
+              <a href={RACHEL_URLS[sound.ipa]} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition-colors active:scale-98">
+                <div className="w-8 h-8 rounded-xl bg-rose-500/20 flex items-center justify-center flex-shrink-0">
+                  <span className="text-rose-400 text-xs font-bold">RE</span>
+                </div>
+                <div className="flex-1 text-left">
+                  <div className="text-white/80 text-sm font-medium">Rachel's English</div>
+                  <div className="text-white/40 text-xs">Hướng dẫn chi tiết âm /{sound.ipa}/</div>
+                </div>
+                <ExternalLink size={14} className="text-white/30" />
+              </a>
+            )}
+            <a href={rachelYouTubeSearch(sound.label)} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition-colors active:scale-98">
-              <div className="w-8 h-8 rounded-xl bg-rose-500/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-rose-400 text-xs font-bold">RE</span>
+              <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center flex-shrink-0">
+                <Play size={14} className="text-red-400 fill-red-400" />
               </div>
               <div className="flex-1 text-left">
-                <div className="text-white/80 text-sm font-medium">Rachel's English</div>
-                <div className="text-white/40 text-xs">Hướng dẫn chi tiết âm /{sound.ipa}/</div>
+                <div className="text-white/80 text-sm font-medium">YouTube — Rachel's English</div>
+                <div className="text-white/40 text-xs">Video hướng dẫn âm {sound.label}</div>
               </div>
               <ExternalLink size={14} className="text-white/30" />
             </a>
-          )}
-          <a href={rachelYouTubeSearch(sound.label)} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 hover:bg-white/10 transition-colors active:scale-98">
-            <div className="w-8 h-8 rounded-xl bg-red-600/20 flex items-center justify-center flex-shrink-0">
-              <Play size={14} className="text-red-400 fill-red-400" />
-            </div>
-            <div className="flex-1 text-left">
-              <div className="text-white/80 text-sm font-medium">YouTube — Rachel's English</div>
-              <div className="text-white/40 text-xs">Video hướng dẫn âm {sound.label}</div>
-            </div>
-            <ExternalLink size={14} className="text-white/30" />
-          </a>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Practice words */}
       <div className="px-4">
@@ -909,7 +971,7 @@ function SoundDetailScreen({ sound, onBack, onPracticeWord }) {
   )
 }
 
-function PracticeWordScreen({ word, meaning, emoji, onBack }) {
+function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBack }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a]">
       <div className="px-4 pt-6 pb-2 flex items-center gap-3">
@@ -918,7 +980,7 @@ function PracticeWordScreen({ word, meaning, emoji, onBack }) {
         </button>
         <span className="text-white/50 text-sm">Luyện phát âm</span>
       </div>
-      <PronunciationPractice word={word} meaning={meaning} emoji={emoji} onBack={onBack} />
+      <PronunciationPractice word={word} meaning={meaning} emoji={emoji} lang={lang} prebuiltPhonemes={prebuiltPhonemes} onBack={onBack} />
     </div>
   )
 }
@@ -1013,21 +1075,39 @@ export default function App() {
   const [screen, setScreen] = useState('library')
   const [selectedSound, setSelectedSound] = useState(null)
   const [practiceWord, setPracticeWord] = useState(null)
+  const [lang, setLang] = useState('en')   // 'en' | 'es' | 'it'
+
+  const azureCode = LANG_CONFIG[lang].azureCode
 
   const handleSelectSound = (sound) => { setSelectedSound(sound); setScreen('soundDetail') }
   const handlePracticeWord = (w) => { setPracticeWord(w); setScreen('practiceWord') }
   const handleNavigate = (s) => { setScreen(s); setSelectedSound(null); setPracticeWord(null) }
+  const handleChangeLang = (l) => { setLang(l); setSelectedSound(null); setPracticeWord(null) }
+
+  // Build prebuilt phonemes for Spanish/Italian words
+  const phonemeInfoMap = lang === 'es' ? SPANISH_PHONEME_INFO : lang === 'it' ? ITALIAN_PHONEME_INFO : null
+  const getWordPhonemes = (w) => {
+    if (!phonemeInfoMap || !w?.phonemes) return null
+    return buildPhonemes(w.phonemes, phonemeInfoMap)
+  }
 
   return (
     <div className="max-w-md mx-auto bg-[#0f0f1a] min-h-screen relative">
       {screen === 'library' && (
-        <SoundLibraryScreen onSelectSound={handleSelectSound} onGoDict={() => handleNavigate('dictionary')} />
+        <SoundLibraryScreen lang={lang} onSelectSound={handleSelectSound} onGoDict={() => handleNavigate('dictionary')} onChangeLang={handleChangeLang} />
       )}
       {screen === 'soundDetail' && selectedSound && (
-        <SoundDetailScreen sound={selectedSound} onBack={() => setScreen('library')} onPracticeWord={handlePracticeWord} />
+        <SoundDetailScreen sound={selectedSound} lang={lang} onBack={() => setScreen('library')} onPracticeWord={handlePracticeWord} />
       )}
       {screen === 'practiceWord' && practiceWord && (
-        <PracticeWordScreen word={practiceWord.word} meaning={practiceWord.meaning} emoji={practiceWord.emoji} onBack={() => setScreen('soundDetail')} />
+        <PracticeWordScreen
+          word={practiceWord.word}
+          meaning={practiceWord.meaning}
+          emoji={practiceWord.emoji}
+          lang={azureCode}
+          prebuiltPhonemes={getWordPhonemes(practiceWord)}
+          onBack={() => setScreen('soundDetail')}
+        />
       )}
       {screen === 'dictionary' && (
         <DictionaryScreen onBack={() => handleNavigate('library')} />
