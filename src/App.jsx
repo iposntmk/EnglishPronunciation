@@ -556,74 +556,53 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  // ── Web Speech API path ──────────────────────────────────────────────────
+  // ── Web Speech API path (no MediaRecorder — avoids mic conflict on Android) ─
   const startWebSpeech = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SR) {
       setErrorMsg('Trình duyệt không hỗ trợ Web Speech API. Dùng Chrome hoặc Edge.')
       return
     }
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      streamRef.current = stream
-      const mimeType = getSupportedMimeType()
-      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
-      mrRef.current = mr
-      const chunks = []
-      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
-      mr.onstop = () => {
-        stream.getTracks().forEach(t => t.stop())
-        if (chunks.length > 0) {
-          const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
-          setRecordingUrl(URL.createObjectURL(blob))
-        }
-      }
-      mr.start(100)
+    const recognition = new SR()
+    recognition.lang = 'en-US'
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.maxAlternatives = 1
+    speechRef.current = recognition
 
-      const recognition = new SR()
-      recognition.lang = 'en-US'
-      recognition.continuous = false
-      recognition.interimResults = false
-      recognition.maxAlternatives = 1
-      speechRef.current = recognition
+    recognition.onresult = ev => {
+      clearTimeout(timeoutRef.current)
+      const transcript = (ev.results[0][0].transcript || '').trim().toLowerCase().replace(/[.,!?'"]/g, '')
+      const confidence = ev.results[0][0].confidence || 0.8
+      const spokenWord = transcript.split(/\s+/)[0] || transcript
+      const targetWord = phonemes.map(p => p.text).join('').toLowerCase()
+      const wordMatch = spokenWord === targetWord || transcript.includes(targetWord)
+      const baseScore = Math.round(confidence * 100)
+      const overall = wordMatch ? baseScore : Math.max(0, baseScore - 25)
+      const scored = phonemes.map(p => ({
+        ...p, score: overall,
+        note: !wordMatch && overall < 70 ? `Nghe như "${spokenWord}"` : null,
+      }))
+      setResult({ phonemes: scored, overall, spokenWord })
+      setPhase('result')
+    }
+    recognition.onerror = ev => {
+      clearTimeout(timeoutRef.current)
+      if (ev.error === 'aborted') return
+      if (ev.error === 'no-speech') setErrorMsg('Không nghe thấy giọng nói. Thử nói to hơn.')
+      else if (ev.error === 'not-allowed') setErrorMsg('Chưa cấp quyền microphone — nhấn icon 🔒 và bật Microphone.')
+      else setErrorMsg(`Lỗi nhận dạng: ${ev.error}`)
+      setPhase('ready')
+    }
+    recognition.onend = () => {
+      clearTimeout(timeoutRef.current)
+      // Only reset if no result came through yet
+      setPhase(prev => prev === 'recording' ? 'ready' : prev)
+    }
 
-      recognition.onresult = ev => {
-        clearTimeout(timeoutRef.current)
-        if (mrRef.current?.state === 'recording') mrRef.current.stop()
-        const transcript = (ev.results[0][0].transcript || '').trim().toLowerCase().replace(/[.,!?'"]/g, '')
-        const confidence = ev.results[0][0].confidence || 0.8
-        const spokenWord = transcript.split(/\s+/)[0] || transcript
-        const targetWord = phonemes.map(p => p.text).join('').toLowerCase()
-        const wordMatch = spokenWord === targetWord || transcript.includes(targetWord)
-        const baseScore = Math.round(confidence * 100)
-        const overall = wordMatch ? baseScore : Math.max(0, baseScore - 25)
-        const scored = phonemes.map(p => ({
-          ...p, score: overall,
-          note: !wordMatch && overall < 70 ? `Nghe như "${spokenWord}"` : null,
-        }))
-        setResult({ phonemes: scored, overall, spokenWord })
-        setPhase('result')
-      }
-      recognition.onerror = ev => {
-        clearTimeout(timeoutRef.current)
-        if (mrRef.current?.state === 'recording') mrRef.current.stop()
-        if (ev.error === 'no-speech') setErrorMsg('Không nghe thấy giọng nói. Thử nói to hơn.')
-        else if (ev.error === 'not-allowed') setErrorMsg('Chưa cấp quyền microphone.')
-        else setErrorMsg(`Lỗi nhận dạng: ${ev.error}`)
-        setPhase('ready')
-      }
-      recognition.onend = () => {
-        if (mrRef.current?.state === 'recording') mrRef.current.stop()
-      }
-
-      recognition.start()
-      setPhase('recording')
-      timeoutRef.current = setTimeout(() => recognition.stop(), 5000)
-    }).catch(err => {
-      const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
-      setErrorMsg(isDenied
-        ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
-        : `Lỗi microphone: ${err.message}`)
-    })
+    recognition.start()
+    setPhase('recording')
+    timeoutRef.current = setTimeout(() => recognition.stop(), 7000)
   }, [phonemes])
 
   // ── Blob-based path (offline / API) ──────────────────────────────────────
