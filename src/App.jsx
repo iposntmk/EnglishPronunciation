@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square, Settings } from 'lucide-react'
 import { SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS } from './data.js'
-import { ensureModelLoaded, isModelReady, ensureWhisperLoaded, isWhisperReady, scoreWord } from './scorer.js'
+import { ensureModelLoaded, isModelReady, scoreWord } from './scorer.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -521,9 +521,8 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
   const provider = localStorage.getItem('pronunciationProvider') || 'web-speech'
-  const needsModelLoad = provider === 'whisper-local' || provider === 'offline'
+  const needsModelLoad = provider === 'offline'
   const [modelReady, setModelReady] = useState(() => {
-    if (provider === 'whisper-local') return isWhisperReady()
     if (provider === 'offline') return isModelReady()
     return true
   })
@@ -536,8 +535,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
 
   useEffect(() => {
     if (!needsModelLoad) { setModelReady(true); return }
-    if (provider === 'whisper-local' && isWhisperReady()) { setModelReady(true); return }
-    if (provider === 'offline' && isModelReady()) { setModelReady(true); return }
+    if (isModelReady()) { setModelReady(true); return }
     const totals = {}
     const onProgress = ev => {
       if (ev.status === 'progress') {
@@ -548,8 +546,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
       }
       if (ev.status === 'ready') setModelReady(true)
     }
-    const loader = provider === 'whisper-local' ? ensureWhisperLoaded(onProgress) : ensureModelLoaded(onProgress)
-    loader.then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
+    ensureModelLoaded(onProgress).then(() => setModelReady(true)).catch(e => setErrorMsg(`Lỗi tải model: ${e.message}`))
   }, [])
 
   useEffect(() => () => {
@@ -755,7 +752,7 @@ function PronunciationPractice({ word, meaning, emoji, onBack }) {
           <div className="w-full rounded-2xl py-3 px-4 bg-white/5 border border-white/10 text-white/60 text-sm">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
-              {provider === 'whisper-local' ? `Đang tải Whisper (~75MB) — ${loadPct}%...` : `Đang tải mô hình AI — ${loadPct}%...`}
+              {`Đang tải mô hình AI — ${loadPct}%...`}
             </div>
             <div className="w-full bg-white/10 rounded-full h-1.5">
               <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${loadPct}%` }} />
@@ -1069,13 +1066,6 @@ const PROVIDERS = [
     badge: 'KHÔNG CẦN KEY',
     badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
     desc: 'Chấm điểm từng âm vị chi tiết. Tải ~40MB lần đầu, hoạt động offline.',
-  },
-  {
-    id: 'whisper-local',
-    label: 'Whisper trong trình duyệt',
-    badge: 'KHÔNG CẦN KEY',
-    badgeColor: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    desc: 'Whisper tiny chạy offline. Tải ~75MB lần đầu. Yêu cầu trình duyệt mới.',
   },
   {
     id: 'azure',
