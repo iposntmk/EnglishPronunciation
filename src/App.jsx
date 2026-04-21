@@ -4,6 +4,7 @@ import {
   SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS,
   SPANISH_SOUNDS, SPANISH_VOWEL_GROUPS, SPANISH_CONSONANT_GROUPS, SPANISH_PHONEME_INFO,
   ITALIAN_SOUNDS, ITALIAN_VOWEL_GROUPS, ITALIAN_CONSONANT_GROUPS, ITALIAN_PHONEME_INFO,
+  FRENCH_SOUNDS,  FRENCH_VOWEL_GROUPS,  FRENCH_CONSONANT_GROUPS,  FRENCH_PHONEME_INFO,
 } from './data.js'
 import { scoreWord } from './scorer.js'
 import { getAzureUsageSummary } from './azureUsage.js'
@@ -793,9 +794,10 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 // ─── SCREENS ──────────────────────────────────────────────────────────────
 
 const LANG_CONFIG = {
-  en: { label: '🇺🇸 EN', sounds: SOUNDS,        vowelGroups: VOWEL_GROUPS,          consonantGroups: CONSONANT_GROUPS,          azureCode: 'en-US', subtitle: '48 âm chuẩn tiếng Anh' },
-  es: { label: '🇪🇸 ES', sounds: SPANISH_SOUNDS, vowelGroups: SPANISH_VOWEL_GROUPS,  consonantGroups: SPANISH_CONSONANT_GROUPS,  azureCode: 'es-ES', subtitle: 'Tiếng Tây Ban Nha' },
-  it: { label: '🇮🇹 IT', sounds: ITALIAN_SOUNDS, vowelGroups: ITALIAN_VOWEL_GROUPS,  consonantGroups: ITALIAN_CONSONANT_GROUPS,  azureCode: 'it-IT', subtitle: 'Tiếng Ý' },
+  en: { label: '🇺🇸 EN', sounds: SOUNDS,        vowelGroups: VOWEL_GROUPS,          consonantGroups: CONSONANT_GROUPS,         azureCode: 'en-US', subtitle: '48 âm chuẩn tiếng Anh' },
+  es: { label: '🇪🇸 ES', sounds: SPANISH_SOUNDS, vowelGroups: SPANISH_VOWEL_GROUPS,  consonantGroups: SPANISH_CONSONANT_GROUPS, azureCode: 'es-ES', subtitle: 'Tiếng Tây Ban Nha' },
+  it: { label: '🇮🇹 IT', sounds: ITALIAN_SOUNDS, vowelGroups: ITALIAN_VOWEL_GROUPS,  consonantGroups: ITALIAN_CONSONANT_GROUPS, azureCode: 'it-IT', subtitle: 'Tiếng Ý' },
+  fr: { label: '🇫🇷 FR', sounds: FRENCH_SOUNDS,  vowelGroups: FRENCH_VOWEL_GROUPS,   consonantGroups: FRENCH_CONSONANT_GROUPS,  azureCode: 'fr-FR', subtitle: 'Tiếng Pháp' },
 }
 
 function AzureUsageBadge() {
@@ -1085,7 +1087,7 @@ export default function App() {
   const handleChangeLang = (l) => { setLang(l); setSelectedSound(null); setPracticeWord(null) }
 
   // Build prebuilt phonemes for Spanish/Italian words
-  const phonemeInfoMap = lang === 'es' ? SPANISH_PHONEME_INFO : lang === 'it' ? ITALIAN_PHONEME_INFO : null
+  const phonemeInfoMap = lang === 'es' ? SPANISH_PHONEME_INFO : lang === 'it' ? ITALIAN_PHONEME_INFO : lang === 'fr' ? FRENCH_PHONEME_INFO : null
   const getWordPhonemes = (w) => {
     if (!phonemeInfoMap || !w?.phonemes) return null
     return buildPhonemes(w.phonemes, phonemeInfoMap)

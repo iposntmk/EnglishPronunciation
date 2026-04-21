@@ -209,8 +209,9 @@ async function scoreWordOffline(audioBlob, phonemes) {
 }
 
 export async function scoreWord(audioBlob, phonemes, language = 'en-US') {
-  const key = '8YhqF60IjVDMbHoDYdrUwww91g6KtGAMlUecA39hnUS5KOlXrVOWJQQJ99CDACqBBLyXJ3w3AAAYACOG1zyw'
-  const region = 'southeastasia'
+  const key = import.meta.env.VITE_AZURE_KEY
+  const region = import.meta.env.VITE_AZURE_REGION || 'southeastasia'
+  if (!key) throw new Error('Azure key chưa được cấu hình (VITE_AZURE_KEY)')
   const { scoreWordAzure } = await import('./api-scorers.js')
   return scoreWordAzure(audioBlob, phonemes, key, region, language)
 }

@@ -195,7 +195,25 @@ const AZURE_TO_IPA_IT = {
   w: 'w', j: 'j',
 }
 
-const AZURE_PHONEME_MAPS = { 'en-US': AZURE_TO_IPA_EN, 'es-ES': AZURE_TO_IPA_ES, 'it-IT': AZURE_TO_IPA_IT }
+// Azure fr-FR phoneme IDs → IPA  (SAMPA-style IDs used by Azure)
+const AZURE_TO_IPA_FR = {
+  a: 'a', e: 'e', E: 'ɛ', i: 'i', o: 'o', O: 'ɔ', u: 'u', y: 'y',
+  '2': 'ø', '9': 'œ', '@': 'ə',
+  'a~': 'ɑ̃', 'E~': 'ɛ̃', 'o~': 'ɔ̃', '9~': 'œ̃',
+  p: 'p', b: 'b', t: 't', d: 'd', k: 'k', g: 'g',
+  f: 'f', v: 'v', s: 's', z: 'z',
+  S: 'ʃ', Z: 'ʒ',
+  m: 'm', n: 'n', J: 'ɲ', N: 'ŋ',
+  l: 'l', R: 'ʁ',
+  j: 'j', w: 'w', H: 'ɥ',
+}
+
+const AZURE_PHONEME_MAPS = {
+  'en-US': AZURE_TO_IPA_EN,
+  'es-ES': AZURE_TO_IPA_ES,
+  'it-IT': AZURE_TO_IPA_IT,
+  'fr-FR': AZURE_TO_IPA_FR,
+}
 
 export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, region, language = 'en-US') {
   const wavBlob = await audioBlobToPcmWav(audioBlob)
