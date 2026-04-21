@@ -517,11 +517,14 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(3)
+  const [countdown, setCountdown] = useState(3)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
   const speechRef = useRef(null)
   const audioRef = useRef(null)
   const timeoutRef = useRef(null)
+  const countdownRef = useRef(null)
   const blobRef = useRef(null)
 
   useEffect(() => () => {
@@ -538,6 +541,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
         const chunks = []
         mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
         mr.onstop = async () => {
+          clearInterval(countdownRef.current)
           stream.getTracks().forEach(t => t.stop())
           if (chunks.length === 0) { setErrorMsg('Không ghi được âm thanh. Thử lại.'); setPhase('ready'); return }
           const blob = new Blob(chunks, { type: mr.mimeType || 'audio/webm' })
@@ -553,9 +557,13 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
         }
         mr.start(100)
         setPhase('recording')
+        setCountdown(recordingDuration)
+        countdownRef.current = setInterval(() => {
+          setCountdown(prev => Math.max(0, prev - 1))
+        }, 1000)
         timeoutRef.current = setTimeout(() => {
           if (mrRef.current?.state === 'recording') mrRef.current.stop()
-        }, 5000)
+        }, recordingDuration * 1000)
       })
       .catch(err => {
         const isDenied = err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError'
@@ -563,7 +571,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
           ? 'Chưa cấp quyền microphone — nhấn icon 🔒 trên thanh địa chỉ và bật Microphone.'
           : `Lỗi microphone: ${err.message}`)
       })
-  }, [phonemes])
+  }, [phonemes, recordingDuration])
 
   const startRecording = useCallback(() => {
     setRecordingUrl(null)
@@ -573,6 +581,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 
   const stopRecording = () => {
     clearTimeout(timeoutRef.current)
+    clearInterval(countdownRef.current)
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
@@ -593,6 +602,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 
   const reset = () => {
     clearTimeout(timeoutRef.current)
+    clearInterval(countdownRef.current)
     if (mrRef.current?.state !== 'inactive') mrRef.current?.stop()
     streamRef.current?.getTracks().forEach(t => t.stop())
     blobRef.current = null
@@ -708,18 +718,33 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 
         {/* Bước 1: ready */}
         {phase === 'ready' && (
-          <button onClick={startRecording}
-            className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
-            <Mic size={24} />
-            Bắt đầu ghi âm
-          </button>
+          <>
+            <button onClick={startRecording}
+              className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-4 flex items-center justify-center gap-3 text-lg font-semibold active:scale-95 transition-transform">
+              <Mic size={24} />
+              Ghi âm ({recordingDuration}s)
+            </button>
+            <div className="flex items-center justify-center gap-4">
+              <button onClick={() => setRecordingDuration(d => Math.max(1, d - 1))}
+                className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
+                −
+              </button>
+              <span className="text-white/50 text-sm w-20 text-center">Thời gian: {recordingDuration}s</span>
+              <button onClick={() => setRecordingDuration(d => Math.min(10, d + 1))}
+                className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
+                +
+              </button>
+            </div>
+          </>
         )}
 
         {/* Bước 2: recording */}
         {phase === 'recording' && (
           <button onClick={stopRecording} className="w-full bg-red-600/20 border border-red-500/50 rounded-2xl py-4 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
             <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-            <span className="font-semibold">Đang ghi âm... nhấn để dừng</span>
+            <span className="font-semibold">Đang ghi âm...</span>
+            <span className="font-bold tabular-nums text-red-300 text-xl">{countdown}s</span>
+            <span className="text-red-400/60 text-sm">nhấn để dừng</span>
           </button>
         )}
 
@@ -742,14 +767,14 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               Thử lại
             </button>
             {(onPrev || onNext) && (
-              <div className="flex gap-2">
-                <button onClick={onPrev} disabled={!onPrev}
-                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
-                  ‹ Từ trước
-                </button>
+              <div className="flex flex-col gap-2">
                 <button onClick={onNext} disabled={!onNext}
-                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
                   Từ tiếp theo ›
+                </button>
+                <button onClick={onPrev} disabled={!onPrev}
+                  className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  ‹ Từ trước
                 </button>
               </div>
             )}
@@ -777,14 +802,14 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               Thử lại
             </button>
             {(onPrev || onNext) && (
-              <div className="flex gap-2">
-                <button onClick={onPrev} disabled={!onPrev}
-                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
-                  ‹ Từ trước
-                </button>
+              <div className="flex flex-col gap-2">
                 <button onClick={onNext} disabled={!onNext}
-                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
                   Từ tiếp theo ›
+                </button>
+                <button onClick={onPrev} disabled={!onPrev}
+                  className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>
+                  ‹ Từ trước
                 </button>
               </div>
             )}
