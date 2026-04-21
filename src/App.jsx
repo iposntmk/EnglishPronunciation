@@ -8,7 +8,7 @@ import {
 } from './data.js'
 import { scoreWord } from './scorer.js'
 import { getAzureUsageSummary } from './azureUsage.js'
-import { speakNeural } from './tts.js'
+import { speakNeural, speakPhoneme } from './tts.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -544,7 +544,11 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
-  const [recordingDuration, setRecordingDuration] = useState(3)
+  const [recordingDuration, setRecordingDuration] = useState(() => {
+    const saved = localStorage.getItem('recordingDuration')
+    return saved ? parseInt(saved, 10) : 3
+  })
+  const [saveAsDefault, setSaveAsDefault] = useState(() => !!localStorage.getItem('recordingDuration'))
   const [countdown, setCountdown] = useState(3)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
@@ -557,6 +561,16 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   useEffect(() => () => {
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
+
+  const changeDuration = (newDur) => {
+    setRecordingDuration(newDur)
+    if (saveAsDefault) localStorage.setItem('recordingDuration', newDur)
+  }
+  const toggleSaveDefault = (checked) => {
+    setSaveAsDefault(checked)
+    if (checked) localStorage.setItem('recordingDuration', recordingDuration)
+    else localStorage.removeItem('recordingDuration')
+  }
 
   const startBlobRecording = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ audio: true })
@@ -671,8 +685,8 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
             const tc = hasScore ? scoreColor(r.score) : 'text-white/60'
             return (
               <button key={idx}
-                onClick={() => hasScore && setSelectedIdx(selectedIdx === idx ? null : idx)}
-                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all ${bg} ${hasScore ? 'cursor-pointer active:scale-95' : 'cursor-default'} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
+                onClick={() => { speakPhoneme(p.text, p.ipa, lang); if (hasScore) setSelectedIdx(selectedIdx === idx ? null : idx) }}
+                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all cursor-pointer active:scale-95 ${bg} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
               >
                 <span className="text-white font-semibold text-sm">{p.text}</span>
                 <span className="text-white/40 font-mono text-xs">/{p.isStressed ? 'ˈ' : ''}{p.ipa}/</span>
@@ -752,16 +766,25 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               Ghi âm ({recordingDuration}s)
             </button>
             <div className="flex items-center justify-center gap-4">
-              <button onClick={() => setRecordingDuration(d => Math.max(1, d - 1))}
+              <button onClick={() => changeDuration(Math.max(1, recordingDuration - 1))}
                 className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
                 −
               </button>
               <span className="text-white/50 text-sm w-20 text-center">Thời gian: {recordingDuration}s</span>
-              <button onClick={() => setRecordingDuration(d => Math.min(10, d + 1))}
+              <button onClick={() => changeDuration(Math.min(10, recordingDuration + 1))}
                 className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
                 +
               </button>
             </div>
+            <label className="flex items-center justify-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={saveAsDefault}
+                onChange={e => toggleSaveDefault(e.target.checked)}
+                className="w-4 h-4 rounded accent-blue-500"
+              />
+              <span className="text-white/40 text-xs">Lưu làm mặc định</span>
+            </label>
           </>
         )}
 

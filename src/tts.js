@@ -67,3 +67,39 @@ export async function speakNeural(text, lang = 'en-US', rate = 0.9) {
     speakBrowser(text, lang)
   }
 }
+
+// Speak a single phoneme using IPA phoneme SSML tag
+export async function speakPhoneme(text, ipa, lang = 'en-US') {
+  const key = import.meta.env.VITE_AZURE_KEY
+  const region = import.meta.env.VITE_AZURE_REGION || 'southeastasia'
+
+  if (!key) { speakBrowser(text || ipa, lang); return }
+
+  const cacheKey = `ph:${lang}:${ipa}`
+  if (CACHE.has(cacheKey)) { playUrl(CACHE.get(cacheKey)); return }
+
+  const voice = AZURE_VOICES[lang] || 'en-US-JennyNeural'
+  const safeText = escXml(text || 'a')
+  const safeIpa = escXml(ipa)
+  const ssml = `<speak version='1.0' xml:lang='${lang}'><voice name='${voice}'><prosody rate='0.8'><phoneme alphabet='ipa' ph='${safeIpa}'>${safeText}</phoneme></prosody></voice></speak>`
+
+  try {
+    const resp = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': key.trim().replace(/[\r\n]/g, ''),
+        'Content-Type': 'application/ssml+xml',
+        'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
+      },
+      body: ssml,
+    })
+    if (!resp.ok) throw new Error(`TTS ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    CACHE.set(cacheKey, url)
+    playUrl(url)
+  } catch (e) {
+    console.warn('[TTS phoneme] Azure failed, using browser fallback:', e.message)
+    speakBrowser(text || ipa, lang)
+  }
+}
