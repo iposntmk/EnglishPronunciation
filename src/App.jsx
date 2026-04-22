@@ -767,6 +767,77 @@ function scoreColor(s) { return s >= 85 ? 'text-emerald-400' : s >= 65 ? 'text-y
 function scoreBg(s) { return s >= 85 ? 'bg-emerald-500/20 border-emerald-500/50' : s >= 65 ? 'bg-yellow-500/20 border-yellow-500/50' : 'bg-red-500/20 border-red-500/50' }
 function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tốt lắm! 👍' : s >= 60 ? 'Gần đúng 💪' : 'Luyện thêm nhé 📚' }
 function formatIpa(p) { return `${p.isStressed ? 'ˈ' : ''}${p.ipa}` }
+function googleTranslateApiUrl(text) {
+  return `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=vi&dt=t&q=${encodeURIComponent(text)}`
+}
+
+async function fetchVietnameseTranslation(text) {
+  const resp = await fetch(googleTranslateApiUrl(text))
+  if (!resp.ok) throw new Error('Không dịch tự động được.')
+  const data = await resp.json()
+  const translated = Array.isArray(data?.[0])
+    ? data[0].map(part => part?.[0]).filter(Boolean).join('')
+    : ''
+  if (!translated) throw new Error('Không có kết quả dịch.')
+  return translated
+}
+
+const INCORRECT_WORD_REPORTS_KEY = 'incorrectWordReports'
+
+function loadIncorrectWordReports() {
+  try {
+    const raw = localStorage.getItem(INCORRECT_WORD_REPORTS_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveIncorrectWordReports(reports) {
+  localStorage.setItem(INCORRECT_WORD_REPORTS_KEY, JSON.stringify(reports))
+}
+
+function playScoreFeedbackSound(score) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    const master = ctx.createGain()
+    master.gain.setValueAtTime(0.0001, ctx.currentTime)
+    master.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.02)
+    master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.65)
+    master.connect(ctx.destination)
+
+    const notes = score >= 90
+      ? [523.25, 659.25, 783.99, 1046.5]
+      : score >= 75
+        ? [440, 554.37, 659.25]
+        : score >= 60
+          ? [392, 440]
+          : [220, 196]
+
+    notes.forEach((freq, index) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const start = ctx.currentTime + index * 0.11
+      const end = start + (score >= 60 ? 0.16 : 0.22)
+      osc.type = score >= 60 ? 'sine' : 'triangle'
+      osc.frequency.setValueAtTime(freq, start)
+      gain.gain.setValueAtTime(0.0001, start)
+      gain.gain.exponentialRampToValueAtTime(0.45, start + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.0001, end)
+      osc.connect(gain)
+      gain.connect(master)
+      osc.start(start)
+      osc.stop(end + 0.02)
+    })
+
+    setTimeout(() => ctx.close().catch(() => {}), 900)
+  } catch {
+    // Feedback sound is non-critical; scoring should never fail because audio playback is blocked.
+  }
+}
 
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
@@ -799,6 +870,8 @@ function PronunciationPractice({
   const [isPlayingBack, setIsPlayingBack] = useState(false)
   const [searchVal, setSearchVal] = useState('')
   const [isMeaningExpanded, setIsMeaningExpanded] = useState(false)
+  const [incorrectReports, setIncorrectReports] = useState(() => loadIncorrectWordReports())
+  const [translation, setTranslation] = useState({ word: '', text: '', loading: false, error: null })
   const [recordingDuration, setRecordingDuration] = useState(() => {
     const saved = localStorage.getItem('recordingDuration')
     return saved ? parseInt(saved, 10) : 3
@@ -818,6 +891,7 @@ function PronunciationPractice({
 
   useEffect(() => {
     setIsMeaningExpanded(false)
+    setTranslation({ word, text: '', loading: false, error: null })
   }, [word])
 
   useEffect(() => {
@@ -866,7 +940,7 @@ function PronunciationPractice({
           setPhase('scoring')
           try {
             const data = await scoreWord(blob, phonemes, lang)
-            setResult(data); setPhase('result')
+            setResult(data); setPhase('result'); playScoreFeedbackSound(data.overall)
           } catch (err) {
             setErrorMsg(`Lỗi chấm điểm: ${err.message}`); setPhase('ready')
           }
@@ -958,7 +1032,42 @@ function PronunciationPractice({
   const sel = selectedIdx !== null && result ? result.phonemes[selectedIdx] : null
   const hasNav = onPrev !== null || onNext !== null
   const detailMeanings = detail?.meanings || []
+  const needsMachineTranslation = detailMeanings.length === 0 || detailMeanings.some(item => item.pos === 'translate')
   const visibleDetailMeanings = isMeaningExpanded ? detailMeanings : detailMeanings.slice(0, 1)
+  const wordReportKey = `${lang}:${word.toLowerCase()}`
+  const isReportedIncorrect = Boolean(incorrectReports[wordReportKey])
+  const toggleIncorrectReport = () => {
+    setIncorrectReports(prev => {
+      const next = { ...prev }
+      if (next[wordReportKey]) {
+        delete next[wordReportKey]
+      } else {
+        next[wordReportKey] = {
+          word,
+          lang,
+          ipa: phonemes.map(formatIpa).join(''),
+          meaning,
+          reportedAt: new Date().toISOString(),
+        }
+      }
+      saveIncorrectWordReports(next)
+      return next
+    })
+  }
+  const translateInApp = useCallback(async () => {
+    setTranslation({ word, text: '', loading: true, error: null })
+    try {
+      const text = await fetchVietnameseTranslation(word)
+      setTranslation({ word, text, loading: false, error: null })
+    } catch (err) {
+      setTranslation({ word, text: '', loading: false, error: err.message || 'Không dịch tự động được.' })
+    }
+  }, [word])
+
+  useEffect(() => {
+    if (needsMachineTranslation) translateInApp()
+  }, [needsMachineTranslation, translateInApp])
+
   const navButtons = hasNav ? (
     <div className="flex flex-col gap-2.5 pt-1">
       <button onClick={onPrev} disabled={!onPrev} className={`w-full rounded-2xl ${compact ? 'py-2' : 'py-3'} flex items-center justify-center gap-1 text-sm font-bold whitespace-nowrap transition-all border ${onPrev ? 'bg-amber-500/20 border-amber-400/40 text-amber-200 active:scale-95' : 'bg-white/5 border-white/5 text-white/20 cursor-not-allowed'}`}>‹ Từ trước</button>
@@ -973,15 +1082,45 @@ function PronunciationPractice({
       {/* Tiêu đề từ + IPA breakdown */}
       <div className={`text-center px-4 ${compact ? 'py-1' : 'py-6'}`}>
         <div className={`${compact ? 'hidden' : 'text-5xl mb-2'}`}>{emoji}</div>
-        <button onClick={() => speakNeural(word, lang)} className={`${compact ? 'text-4xl' : 'text-5xl'} font-extrabold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto leading-tight`}>
-          {word}
-          <Volume2 size={compact ? 24 : 28} className="text-white/55" />
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button onClick={() => speakNeural(word, lang)} className={`${compact ? 'text-4xl' : 'text-5xl'} font-extrabold text-white hover:text-blue-300 transition-colors flex items-center gap-2 leading-tight`}>
+            {word}
+            <Volume2 size={compact ? 24 : 28} className="text-white/55" />
+          </button>
+        </div>
         <div className={`${compact ? 'text-sm' : 'text-xs'} text-white/55 mt-0.5`}>{meaning}</div>
-        <div className={`${compact ? 'text-2xl' : 'text-3xl'} text-cyan-100/90 font-mono font-semibold mt-1 break-all leading-tight`}>/{phonemes.map(formatIpa).join('')}/</div>
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+          <div className={`${compact ? 'text-2xl' : 'text-3xl'} text-cyan-100/90 font-mono font-semibold break-all leading-tight`}>/{phonemes.map(formatIpa).join('')}/</div>
+          <label className={`shrink-0 rounded-xl border px-2.5 py-1 flex items-center gap-1.5 text-xs font-semibold active:scale-95 ${isReportedIncorrect ? 'bg-red-500/20 border-red-400/40 text-red-200' : 'bg-white/5 border-white/10 text-white/55'}`}>
+            <input
+              type="checkbox"
+              checked={isReportedIncorrect}
+              onChange={toggleIncorrectReport}
+              className="accent-red-400"
+            />
+            Incorrect
+          </label>
+          <button
+            type="button"
+            onClick={translateInApp}
+            disabled={translation.loading}
+            className="shrink-0 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-100 px-2.5 py-1 text-xs font-semibold active:scale-95"
+          >
+            {translation.loading ? 'Đang dịch' : 'Dịch'}
+          </button>
+        </div>
 
-        {compact && detailMeanings.length > 0 && (
-          <div className="mt-1 text-left bg-white/5 border border-white/10 rounded-xl px-2 py-1.5">
+        {(translation.loading || translation.text || translation.error) && (
+          <div className="mt-2 mx-auto max-w-xl rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-3 py-2 text-left">
+            <div className="text-cyan-100/60 text-[11px] font-semibold uppercase tracking-wide">Dịch tiếng Việt</div>
+            {translation.loading && <div className="text-cyan-100/70 text-sm mt-0.5">Đang dịch trong app...</div>}
+            {translation.text && <div className="text-cyan-50 text-base font-semibold leading-snug mt-0.5">{translation.text}</div>}
+            {translation.error && <div className="text-red-200 text-sm mt-0.5">{translation.error}</div>}
+          </div>
+        )}
+
+        {detailMeanings.length > 0 && (
+          <div className={`${compact ? 'mt-1 px-2 py-1.5' : 'mt-3 px-3 py-2.5'} text-left bg-white/5 border border-white/10 rounded-xl`}>
             <div className="flex items-center justify-between gap-2 mb-1">
               <span className="text-white/45 text-xs font-semibold uppercase tracking-wide">Nghĩa & ví dụ</span>
               {detailMeanings.length > 1 && (
@@ -1435,6 +1574,36 @@ function saveCommonWordScores(scores) {
   localStorage.setItem(COMMON_3000_SCORES_KEY, JSON.stringify(scores))
 }
 
+function isUsefulWordMeaning(item) {
+  const meaning = item?.meaningVi || ''
+  const definition = item?.definitionEn || ''
+  return Boolean(meaning)
+    && !/^Một .+ tiếng Anh thông dụng\./i.test(meaning)
+    && !/^Một .+ thông dụng trong tiếng Anh\./i.test(meaning)
+    && !/^A common English /i.test(definition)
+}
+
+function getUsefulWordDetail(word) {
+  const raw = COMMON_3000_DETAIL_MAP[word.toLowerCase()]
+  if (!raw?.meanings?.length) return null
+  const meanings = raw.meanings.filter(isUsefulWordMeaning)
+  return meanings.length > 0 ? { ...raw, meanings } : null
+}
+
+function buildTranslateFallbackDetail(word) {
+  return {
+    word,
+    level: null,
+    meanings: [{
+      pos: 'translate',
+      definitionEn: '',
+      meaningVi: 'Dịch tự động trong app để xem nghĩa tiếng Việt của từ này.',
+      exampleEn: `Translate: ${word}`,
+      exampleVi: 'App chưa có nghĩa/ví dụ đủ tốt cho từ này.',
+    }],
+  }
+}
+
 function DictionaryScreen({ onBack }) {
   const [query, setQuery] = useState('')
   const [commonQuery, setCommonQuery] = useState('')
@@ -1442,6 +1611,8 @@ function DictionaryScreen({ onBack }) {
   const [commonLearnedFilter, setCommonLearnedFilter] = useState('all')
   const [learnedCommonWords, setLearnedCommonWords] = useState(() => loadLearnedCommonWords())
   const [commonWordScores, setCommonWordScores] = useState(() => loadCommonWordScores())
+  const [expandedCommonWords, setExpandedCommonWords] = useState(() => new Set())
+  const [commonTranslations, setCommonTranslations] = useState({})
   const [recordingDurationSetting, setRecordingDurationSetting] = useState(() => {
     const saved = localStorage.getItem('recordingDuration')
     return saved ? parseInt(saved, 10) : 3
@@ -1450,14 +1621,17 @@ function DictionaryScreen({ onBack }) {
   const inputRef = useRef(null)
   const openWord = (word, meta = {}) => {
     const w = word.trim().toLowerCase()
+    const usefulDetail = meta.detail || getUsefulWordDetail(w)
+    const fallbackDetail = usefulDetail || buildTranslateFallbackDetail(w)
+    const firstMeaning = usefulDetail?.meanings?.[0]
     if (w) setActiveWord({
       word: w,
-      meaning: meta.meaning || '',
+      meaning: meta.meaning || firstMeaning?.meaningVi || 'Dịch tự động trong app',
       emoji: meta.emoji || '📖',
       strictLookup: meta.strictLookup ?? true,
       source: meta.source || 'search',
       entry: meta.entry || null,
-      detail: meta.detail || null,
+      detail: fallbackDetail,
       commonList: meta.commonList || null,
       commonIndex: meta.commonIndex ?? null,
     })
@@ -1496,18 +1670,41 @@ function DictionaryScreen({ onBack }) {
     localStorage.setItem('recordingDuration', next)
   }
 
+  const toggleCommonDetail = (word) => {
+    const key = word.toLowerCase()
+    setExpandedCommonWords(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const translateCommonInList = async (word) => {
+    const key = word.toLowerCase()
+    setCommonTranslations(prev => ({ ...prev, [key]: { text: '', loading: true, error: null } }))
+    try {
+      const text = await fetchVietnameseTranslation(word)
+      setCommonTranslations(prev => ({ ...prev, [key]: { text, loading: false, error: null } }))
+    } catch (err) {
+      setCommonTranslations(prev => ({ ...prev, [key]: { text: '', loading: false, error: err.message || 'Không dịch tự động được.' } }))
+    }
+  }
+
   const normalizedCommonQuery = commonQuery.trim().toLowerCase()
-  const filteredCommonWords = COMMON_3000_WORDS.filter(entry => {
+  const levelScopedCommonWords = COMMON_3000_WORDS.filter(entry => {
     const levelMatch = commonLevel === 'all' || entry.level === commonLevel
     const queryMatch = !normalizedCommonQuery || entry.word.toLowerCase().includes(normalizedCommonQuery)
+    return levelMatch && queryMatch
+  })
+  const filteredCommonWords = levelScopedCommonWords.filter(entry => {
     const isLearned = learnedCommonWords.has(entry.word.toLowerCase())
-    const learnedMatch = commonLearnedFilter === 'all'
+    return commonLearnedFilter === 'all'
       || (commonLearnedFilter === 'learned' && isLearned)
       || (commonLearnedFilter === 'unlearned' && !isLearned)
-    return levelMatch && queryMatch && learnedMatch
   })
-  const learnedCount = learnedCommonWords.size
-  const unlearnedCount = Math.max(0, COMMON_3000_WORDS.length - learnedCount)
+  const scopedLearnedCount = levelScopedCommonWords.filter(entry => learnedCommonWords.has(entry.word.toLowerCase())).length
+  const scopedUnlearnedCount = Math.max(0, levelScopedCommonWords.length - scopedLearnedCount)
 
   if (activeWord) {
     const isCommonWord = activeWord.source === 'common'
@@ -1515,13 +1712,13 @@ function DictionaryScreen({ onBack }) {
     const commonList = activeWord.commonList || []
     const commonIndex = activeWord.commonIndex ?? -1
     const commonEntry = activeWord.entry || commonList[commonIndex] || null
-    const commonDetail = activeWord.detail || COMMON_3000_DETAIL_MAP[activeWord.word] || null
+    const commonDetail = activeWord.detail || getUsefulWordDetail(activeWord.word) || buildTranslateFallbackDetail(activeWord.word)
     const openCommonAt = (nextIndex) => {
       const nextEntry = commonList[nextIndex]
       if (!nextEntry) return
-      const nextDetail = COMMON_3000_DETAIL_MAP[nextEntry.word.toLowerCase()] || null
+      const nextDetail = getUsefulWordDetail(nextEntry.word.toLowerCase()) || buildTranslateFallbackDetail(nextEntry.word)
       openWord(nextEntry.word, {
-        meaning: `${nextEntry.level} · ${nextEntry.pos}`,
+        meaning: nextDetail.meanings?.[0]?.meaningVi || `${nextEntry.level} · ${nextEntry.pos}`,
         emoji: '📚',
         strictLookup: true,
         source: 'common',
@@ -1646,9 +1843,9 @@ function DictionaryScreen({ onBack }) {
 
         <div className="flex gap-2 overflow-x-auto pb-3">
           {[
-            ['all', `Tất cả · ${COMMON_3000_WORDS.length}`],
-            ['unlearned', `Chưa học · ${unlearnedCount}`],
-            ['learned', `Đã học · ${learnedCount}`],
+            ['all', `Tất cả · ${levelScopedCommonWords.length}`],
+            ['unlearned', `Chưa học · ${scopedUnlearnedCount}`],
+            ['learned', `Đã học · ${scopedLearnedCount}`],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -1662,39 +1859,100 @@ function DictionaryScreen({ onBack }) {
 
         <div className="flex flex-col gap-2">
           {filteredCommonWords.map((entry, index) => {
+            const key = entry.word.toLowerCase()
             const isLearned = learnedCommonWords.has(entry.word.toLowerCase())
             const savedScore = commonWordScores[entry.word.toLowerCase()]
-            const detail = COMMON_3000_DETAIL_MAP[entry.word.toLowerCase()]
+            const detail = getUsefulWordDetail(entry.word) || buildTranslateFallbackDetail(entry.word)
             const firstMeaning = detail?.meanings?.[0]
+            const isExpanded = expandedCommonWords.has(key)
+            const hasDetails = detail?.meanings?.length > 0
+            const needsListTranslation = detail?.meanings?.some(item => item.pos === 'translate')
+            const listTranslation = commonTranslations[key]
             return (
-            <button
+            <div
               key={`${entry.level}-${entry.word}`}
-              onClick={() => openWord(entry.word, {
-                meaning: `${entry.level} · ${entry.pos}`,
-                emoji: '📚',
-                strictLookup: true,
-                source: 'common',
-                entry,
-                detail,
-                commonList: filteredCommonWords,
-                commonIndex: index,
-              })}
-              className={`min-w-0 border rounded-xl px-3 py-2.5 text-left hover:bg-white/10 active:scale-[0.98] transition ${isLearned ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-white/5 border-white/10'}`}
+              className={`min-w-0 border rounded-xl transition ${isLearned ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-white/5 border-white/10'}`}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-white text-sm font-medium">{entry.word}</span>
-                {isLearned && <span className="shrink-0 text-emerald-300 text-xs">✓</span>}
-                {Number.isFinite(savedScore) && (
-                  <span className={`shrink-0 text-[10px] leading-none rounded px-1.5 py-1 border ${savedScore >= 85 ? 'text-emerald-200 border-emerald-400/30 bg-emerald-500/10' : savedScore >= 65 ? 'text-yellow-200 border-yellow-400/30 bg-yellow-500/10' : 'text-red-200 border-red-400/30 bg-red-500/10'}`}>
-                    {savedScore}%
-                  </span>
+              <div className="flex items-stretch">
+                <button
+                  type="button"
+                  onClick={() => openWord(entry.word, {
+                meaning: firstMeaning?.meaningVi || `${entry.level} · ${entry.pos}`,
+                emoji: '📚',
+                    strictLookup: true,
+                    source: 'common',
+                    entry,
+                    detail,
+                    commonList: filteredCommonWords,
+                    commonIndex: index,
+                  })}
+                  className="min-w-0 flex-1 px-3 py-2.5 text-left hover:bg-white/10 active:scale-[0.98] transition rounded-l-xl"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-white text-sm font-medium">{entry.word}</span>
+                    {isLearned && <span className="shrink-0 text-emerald-300 text-xs">✓</span>}
+                    {Number.isFinite(savedScore) && (
+                      <span className={`shrink-0 text-[10px] leading-none rounded px-1.5 py-1 border ${savedScore >= 85 ? 'text-emerald-200 border-emerald-400/30 bg-emerald-500/10' : savedScore >= 65 ? 'text-yellow-200 border-yellow-400/30 bg-yellow-500/10' : 'text-red-200 border-red-400/30 bg-red-500/10'}`}>
+                        {savedScore}%
+                      </span>
+                    )}
+                    <span className="ml-auto shrink-0 text-[10px] leading-none text-white/50 border border-white/10 rounded px-1.5 py-1">{entry.level}</span>
+                  </div>
+                  <div className="text-white/35 text-xs mt-1">
+                    {firstMeaning?.meaningVi || entry.pos}
+                  </div>
+                </button>
+                {hasDetails && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      toggleCommonDetail(entry.word)
+                      if (!isExpanded && needsListTranslation && !listTranslation?.text && !listTranslation?.loading) {
+                        translateCommonInList(entry.word)
+                      }
+                    }}
+                    className="w-12 shrink-0 border-l border-white/10 text-white/65 flex items-center justify-center rounded-r-xl hover:bg-white/10 active:scale-95 transition-transform"
+                    aria-label={isExpanded ? 'Thu gọn nghĩa và ví dụ' : 'Mở rộng nghĩa và ví dụ'}
+                  >
+                    {isExpanded ? <Minus size={18} /> : <Plus size={18} />}
+                  </button>
                 )}
-                <span className="ml-auto shrink-0 text-[10px] leading-none text-white/50 border border-white/10 rounded px-1.5 py-1">{entry.level}</span>
               </div>
-              <div className="text-white/35 text-xs mt-1">
-                {firstMeaning?.meaningVi || entry.pos}
-              </div>
-            </button>
+              {isExpanded && hasDetails && (
+                <div className="border-t border-white/10 px-3 py-2.5 flex flex-col gap-2">
+                  {detail.meanings.map((item, itemIndex) => (
+                    <div key={`${entry.word}-${item.pos}-${itemIndex}`} className="min-w-0">
+                      {item.pos === 'translate' ? (
+                        <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 px-2.5 py-2">
+                          <div className="text-cyan-100/60 text-[10px] font-semibold uppercase tracking-wide">Dịch tiếng Việt</div>
+                          {listTranslation?.loading && <div className="text-cyan-100/70 text-sm mt-0.5">Đang dịch trong app...</div>}
+                          {listTranslation?.text && <div className="text-cyan-50 text-sm font-semibold leading-snug mt-0.5">{listTranslation.text}</div>}
+                          {listTranslation?.error && <div className="text-red-200 text-xs mt-0.5">{listTranslation.error}</div>}
+                          {!listTranslation?.loading && !listTranslation?.text && (
+                            <button
+                              type="button"
+                              onClick={() => translateCommonInList(entry.word)}
+                              className="mt-1 rounded-lg bg-cyan-500/15 border border-cyan-400/30 text-cyan-100 px-2 py-1 text-xs font-semibold active:scale-95"
+                            >
+                              Dịch trong app
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span className="shrink-0 text-[10px] uppercase tracking-wide text-emerald-300 border border-emerald-400/25 rounded px-1.5 py-0.5">{item.pos}</span>
+                            <span className="text-white/85 text-sm leading-snug">{item.meaningVi}</span>
+                          </div>
+                          <div className="text-white/45 text-xs leading-snug mt-1">{item.exampleEn}</div>
+                          <div className="text-white/35 text-xs leading-snug">{item.exampleVi}</div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             )
           })}
         </div>
