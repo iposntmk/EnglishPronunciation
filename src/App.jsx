@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square } from 'lucide-react'
+import { Mic, Volume2, Search, ChevronLeft, RotateCcw, BookOpen, Library, ExternalLink, Play, Square, Home, Plus, Minus } from 'lucide-react'
 import {
   SOUNDS, VOWEL_GROUPS, CONSONANT_GROUPS,
   SPANISH_SOUNDS, SPANISH_VOWEL_GROUPS, SPANISH_CONSONANT_GROUPS, SPANISH_PHONEME_INFO,
@@ -9,6 +9,8 @@ import {
 import { scoreWord } from './scorer.js'
 import { getAzureUsageSummary } from './azureUsage.js'
 import { speakNeural, speakPhoneme } from './tts.js'
+import { COMMON_3000_WORDS, COMMON_3000_LEVELS, COMMON_3000_COUNTS } from './commonWords.js'
+import { COMMON_3000_DETAIL_MAP } from './commonWordDetails.js'
 
 // ─── RACHEL'S ENGLISH LINKS ────────────────────────────────────────────────
 
@@ -85,6 +87,8 @@ const PHONEME_INFO = {
   'ər': { tip: 'Schwa + cuộn lưỡi nhẹ (giọng Mỹ)', hard: false },
   'eɪ': { tip: 'Diphthong: "e" trượt lên "i" — "day, make"', hard: false },
   'aɪ': { tip: 'Diphthong: "a" rộng trượt lên "i" — "night, like"', hard: false },
+  'aɪər':{ tip: 'Diphthong + đuôi r-colored — "fire, acquire"', hard: false },
+  'aʊər':{ tip: 'Diphthong + đuôi r-colored — "hour, power"', hard: false },
   'aʊ': { tip: 'Diphthong: "a" trượt lên "u" — "now, out"', hard: false },
   'oʊ': { tip: 'Diphthong: "o" trượt lên "u" — "go, road"', hard: false },
   'ɔɪ': { tip: 'Diphthong: "oi" trong "boy, voice"', hard: false },
@@ -388,7 +392,7 @@ const WORD_IPA_RAW = {
   learning:[['learn','lɜːrn'],['ing','ɪŋ']],
 }
 
-// Primary stress index (0-based) within the WORD_IPA_RAW phoneme array.
+// Primary stress index (0-based) by vowel nucleus / stressed syllable.
 // Only multi-syllable words are listed; single-syllable words need no ˈ mark.
 const WORD_STRESS_IDX = {
   // stress on 2nd group
@@ -412,24 +416,248 @@ const WORD_STRESS_IDX = {
   pronunciation: 3, university: 2, usual: 0, vegetable: 0,
 }
 
-function lookupWord(word) {
+const STRESS_VOWEL_MARKERS = [
+  'ɛər', 'ɪər', 'ɑːr', 'ɔːr', 'ər',
+  'iː', 'ɜː', 'uː', 'ɔː', 'ɑː',
+  'oʊ', 'eɪ', 'aɪ', 'aʊ', 'ɔɪ',
+  'ə', 'ɪ', 'ɛ', 'æ', 'ʌ', 'ʊ',
+]
+
+function hasStressBearingVowel(ipa) {
+  return STRESS_VOWEL_MARKERS.some(marker => ipa.includes(marker))
+}
+
+function unsupportedWord(word) {
+  return [{
+    text: word,
+    ipa: '?',
+    tip: 'Từ này chưa có IPA đáng tin trong từ điển English hiện tại',
+    isHard: false,
+    isStressed: false,
+    canScore: false,
+    lookupNote: 'Chưa hỗ trợ từ này trong English dictionary. App sẽ chỉ chấm những từ có IPA đã được kiểm chứng.',
+  }]
+}
+
+function normalizeWordEntry(raw, stressIdx = -1) {
+  let vowelIdx = -1
+  return raw.map(([text, ipa], i) => ({
+    ...(hasStressBearingVowel(ipa) ? { __vowelIdx: ++vowelIdx } : { __vowelIdx: null }),
+    text, ipa,
+    tip: PHONEME_INFO[ipa]?.tip || `Âm /${ipa}/`,
+    isHard: PHONEME_INFO[ipa]?.hard || false,
+    isStressed: hasStressBearingVowel(ipa) && vowelIdx === stressIdx,
+    canScore: true,
+    lookupNote: null,
+  })).map(({ __vowelIdx, ...entry }) => entry)
+}
+
+const EXTERNAL_DICT_CACHE = new Map()
+
+const EN_FALLBACK_IPA_OVERRIDES = {
+  commitment: '/kəˈmɪtmənt/',
+  committee: '/kəˈmɪti/',
+  competitor: '/kəmˈpetətər/',
+  complex: '/kəmˈpleks/',
+}
+
+function stripIpaDecorators(ipa) {
+  return ipa
+    .replace(/^\/|\/$/g, '')
+    .replace(/^\[|\]$/g, '')
+    .replace(/[()]/g, '')
+    .replace(/\./g, '')
+    .replace(/ˌ/g, '')
+    .trim()
+}
+
+function normalizeExternalIpa(ipa) {
+  return stripIpaDecorators(ipa)
+    .normalize('NFC')
+    .replace(/ː/g, 'ː')
+    .replace(/ˑ/g, 'ː')
+    .replace(/l̩/g, 'əl')
+    .replace(/m̩/g, 'əm')
+    .replace(/n̩/g, 'ən')
+    .replace(/ɹ/g, 'r')
+    .replace(/ɡ/g, 'g')
+    .replace(/ɚ/g, 'ər')
+    .replace(/ɝ/g, 'ɜː')
+    .replace(/ɜr/g, 'ɜːr')
+    .replace(/ɫ/g, 'l')
+    .replace(/ᵻ/g, 'ɪ')
+    .replace(/ᵿ/g, 'ʊ')
+    .replace(/ʔ/g, 't')
+    .replace(/əʊ/g, 'oʊ')
+    .replace(/əu/g, 'oʊ')
+    .replace(/oː/g, 'oʊ')
+    .replace(/ɔːɹ/g, 'ɔːr')
+    .replace(/ɑːɹ/g, 'ɑːr')
+    .replace(/ɜːɹ/g, 'ɜːr')
+    .replace(/eə/g, 'ɛər')
+    .replace(/ɪə/g, 'ɪər')
+    .replace(/ʊə/g, 'ɔːr')
+    .replace(/aə/g, 'aɪər')
+}
+
+const EXTERNAL_IPA_ATOMS = [
+  'aɪər', 'aʊər', 'tʃ', 'dʒ', 'iː', 'ɜː', 'uː', 'ɔː', 'ɑː', 'oʊ', 'eɪ', 'aɪ', 'aʊ', 'ɔɪ',
+  'ɛər', 'ɪər', 'ɑːr', 'ɔːr', 'ɜːr', 'ər', 'juː', 'kw', 'ks',
+  'ŋk', 'ŋg', 'θ', 'ð', 'ʃ', 'ʒ', 'ŋ',
+  'ə', 'ɪ', 'ɛ', 'æ', 'ʌ', 'ʊ', 'i', 'ɑ', 'ɒ', 'ɔ', 'e', 'a', 'ɜ', 'ɐ', 'ɾ',
+  'p', 'b', 't', 'd', 'k', 'g', 'm', 'n', 'f', 'v', 's', 'z', 'h', 'r', 'j', 'w', 'l',
+]
+
+function tokenizeExternalIpa(rawIpa) {
+  const ipa = normalizeExternalIpa(rawIpa)
+  if (!ipa) return []
+
+  const out = []
+  let i = 0
+  let stressNext = false
+
+  while (i < ipa.length) {
+    const ch = ipa[i]
+    if (ch === 'ˈ') {
+      stressNext = true
+      i++
+      continue
+    }
+
+    const atom = EXTERNAL_IPA_ATOMS.find(item => ipa.startsWith(item, i))
+    if (!atom) {
+      if (/[\s,_-]/.test(ch)) {
+        i++
+        continue
+      }
+      out.push({ ipa: ch, isStressed: stressNext })
+      stressNext = false
+      i++
+      continue
+    }
+    out.push({ ipa: atom, isStressed: stressNext })
+    stressNext = false
+    i += atom.length
+  }
+
+  return out
+}
+
+function splitWordAcrossPhonemes(word, count) {
+  const clean = word.trim()
+  if (count <= 1) return [clean]
+
+  const out = []
+  let cursor = 0
+  for (let i = 0; i < count; i++) {
+    const remainingLetters = clean.length - cursor
+    const remainingSlots = count - i
+    const size = Math.max(1, Math.ceil(remainingLetters / remainingSlots))
+    out.push(clean.slice(cursor, cursor + size))
+    cursor += size
+  }
+  if (cursor < clean.length) out[out.length - 1] += clean.slice(cursor)
+  return out
+}
+
+function buildExternalWordEntry(word, rawIpa) {
+  const tokens = tokenizeExternalIpa(rawIpa)
+  if (tokens.length === 0) return null
+  const chunks = splitWordAcrossPhonemes(word, tokens.length)
+  return tokens.map((token, index) => ({
+    text: chunks[index] || '',
+    ipa: token.ipa,
+    tip: PHONEME_INFO[token.ipa]?.tip || `Âm /${token.ipa}/`,
+    isHard: PHONEME_INFO[token.ipa]?.hard || false,
+    isStressed: token.isStressed,
+    canScore: true,
+    lookupNote: null,
+  }))
+}
+
+function buildRuleBasedWordEntry(word) {
+  const fallbackIpa = EN_FALLBACK_IPA_OVERRIDES[word.toLowerCase()]
+  const built = fallbackIpa ? buildExternalWordEntry(word, fallbackIpa) : null
+  if (built) return built
+  return g2p(word).map(p => ({
+    ...p,
+    canScore: true,
+    lookupNote: null,
+  }))
+}
+
+async function fetchEnglishDictionaryPhonemes(word) {
+  const key = word.toLowerCase().trim()
+  if (!key) return null
+  if (EXTERNAL_DICT_CACHE.has(key)) return EXTERNAL_DICT_CACHE.get(key)
+
+  const promise = (async () => {
+    try {
+      const phraseParts = key.split(/\s+/).filter(Boolean)
+      if (phraseParts.length > 1) {
+        const parts = []
+        for (const part of phraseParts) {
+          const found = await fetchEnglishDictionaryPhonemes(part)
+          if (!found) return null
+          parts.push(found)
+        }
+        return parts.flatMap((partEntries, partIndex) => partEntries.map((entry, entryIndex) => ({
+          ...entry,
+          text: partIndex > 0 && entryIndex === 0 ? ` ${entry.text}` : entry.text,
+        })))
+      }
+
+      let resp = null
+      for (let i = 0; i < 3; i++) {
+        resp = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(key)}`)
+        if (resp.ok) break
+        await new Promise(resolve => setTimeout(resolve, 250 * (i + 1)))
+      }
+      if (!resp?.ok) return buildRuleBasedWordEntry(key)
+      const data = await resp.json()
+      if (!Array.isArray(data)) return buildRuleBasedWordEntry(key)
+
+      for (const entry of data) {
+        const candidates = [
+          ...(entry.phonetics || [])
+            .filter(p => p?.text)
+            .sort((a, b) => {
+              const aUs = /\/us_|-us\.mp3|us_pron/i.test(a.audio || '')
+              const bUs = /\/us_|-us\.mp3|us_pron/i.test(b.audio || '')
+              return Number(bUs) - Number(aUs)
+            })
+            .map(p => p.text),
+          entry.phonetic,
+        ].filter(Boolean)
+
+        for (const candidate of candidates) {
+          const built = buildExternalWordEntry(key, candidate)
+          if (built) return built
+        }
+      }
+      return buildRuleBasedWordEntry(key)
+    } catch {
+      return buildRuleBasedWordEntry(key)
+    }
+  })()
+
+  EXTERNAL_DICT_CACHE.set(key, promise)
+  return promise
+}
+
+function lookupWord(word, { allowGuess = true } = {}) {
   const w = word.toLowerCase().trim().replace(/[^a-z]/g, '')
   const raw = WORD_IPA_RAW[w]
   if (raw) {
     const stressIdx = WORD_STRESS_IDX[w] ?? -1
-    return raw.map(([text, ipa], i) => ({
-      text, ipa,
-      tip: PHONEME_INFO[ipa]?.tip || `Âm /${ipa}/`,
-      isHard: PHONEME_INFO[ipa]?.hard || false,
-      isStressed: i === stressIdx,
-    }))
+    return normalizeWordEntry(raw, stressIdx)
   }
-  return g2p(w)
+  return allowGuess ? g2p(w) : unsupportedWord(w || word)
 }
 
 function g2p(word) {
   const w = word.toLowerCase().replace(/[^a-z]/g, '')
-  if (!w) return [{ text: word, ipa: '?', tip: 'Không tìm thấy trong từ điển', isHard: false }]
+  if (!w) return unsupportedWord(word)
   const out = []
   let i = 0
   const voiced_th_words = new Set(['the','this','that','there','they','them','their','these','those','though','with','other','mother','father','brother','whether','weather','another','together','smooth','breathe'])
@@ -500,7 +728,14 @@ function g2p(word) {
   }
   return out
     .filter(p => p.ipa && p.ipa !== '∅')
-    .map(p => ({ ...p, tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`, isHard: PHONEME_INFO[p.ipa]?.hard || false, isStressed: false }))
+    .map(p => ({
+      ...p,
+      tip: PHONEME_INFO[p.ipa]?.tip || `Âm /${p.ipa}/`,
+      isHard: PHONEME_INFO[p.ipa]?.hard || false,
+      isStressed: false,
+      canScore: false,
+      lookupNote: 'IPA này được đoán theo rule, không đủ tin cậy để chấm điểm English dictionary.',
+    }))
 }
 
 
@@ -531,12 +766,30 @@ function getSupportedMimeType() {
 function scoreColor(s) { return s >= 85 ? 'text-emerald-400' : s >= 65 ? 'text-yellow-400' : 'text-red-400' }
 function scoreBg(s) { return s >= 85 ? 'bg-emerald-500/20 border-emerald-500/50' : s >= 65 ? 'bg-yellow-500/20 border-yellow-500/50' : 'bg-red-500/20 border-red-500/50' }
 function scoreLabel(s) { return s >= 90 ? 'Xuất sắc! 🎉' : s >= 75 ? 'Tốt lắm! 👍' : s >= 60 ? 'Gần đúng 💪' : 'Luyện thêm nhé 📚' }
+function formatIpa(p) { return `${p.isStressed ? 'ˈ' : ''}${p.ipa}` }
 
 // ─── PRONUNCIATION PRACTICE (shared) ─────────────────────────────────────
 
 
-function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltPhonemes = null, onBack, onNext = null, onPrev = null }) {
-  const phonemes = prebuiltPhonemes || lookupWord(word)
+function PronunciationPractice({
+  word,
+  meaning,
+  emoji,
+  lang = 'en-US',
+  prebuiltPhonemes = null,
+  strictLookup = false,
+  compact = false,
+  learnedControl = null,
+  detail = null,
+  onBack,
+  onNext = null,
+  onPrev = null,
+  onSearchWord = null,
+}) {
+  const [phonemes, setPhonemes] = useState(() => prebuiltPhonemes || lookupWord(word, { allowGuess: !strictLookup }))
+  const [isResolvingPhonemes, setIsResolvingPhonemes] = useState(false)
+  const canScoreWord = phonemes.length > 0 && phonemes.every(p => p.canScore !== false && p.ipa && p.ipa !== '?')
+  const lookupNote = phonemes.find(p => p.lookupNote)?.lookupNote || null
   // phases: ready → recording → scoring → result
   const [phase, setPhase] = useState('ready')
   const [errorMsg, setErrorMsg] = useState(null)
@@ -544,11 +797,12 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   const [selectedIdx, setSelectedIdx] = useState(null)
   const [recordingUrl, setRecordingUrl] = useState(null)
   const [isPlayingBack, setIsPlayingBack] = useState(false)
+  const [searchVal, setSearchVal] = useState('')
+  const [isMeaningExpanded, setIsMeaningExpanded] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(() => {
     const saved = localStorage.getItem('recordingDuration')
     return saved ? parseInt(saved, 10) : 3
   })
-  const [saveAsDefault, setSaveAsDefault] = useState(() => !!localStorage.getItem('recordingDuration'))
   const [countdown, setCountdown] = useState(3)
   const mrRef = useRef(null)
   const streamRef = useRef(null)
@@ -562,15 +816,36 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
     if (recordingUrl) URL.revokeObjectURL(recordingUrl)
   }, [recordingUrl])
 
-  const changeDuration = (newDur) => {
-    setRecordingDuration(newDur)
-    if (saveAsDefault) localStorage.setItem('recordingDuration', newDur)
-  }
-  const toggleSaveDefault = (checked) => {
-    setSaveAsDefault(checked)
-    if (checked) localStorage.setItem('recordingDuration', recordingDuration)
-    else localStorage.removeItem('recordingDuration')
-  }
+  useEffect(() => {
+    setIsMeaningExpanded(false)
+  }, [word])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (prebuiltPhonemes) {
+      setPhonemes(prebuiltPhonemes)
+      setIsResolvingPhonemes(false)
+      return () => { cancelled = true }
+    }
+
+    const local = lookupWord(word, { allowGuess: !strictLookup })
+    setPhonemes(local)
+
+    if (!strictLookup || local.every(p => p.canScore !== false)) {
+      setIsResolvingPhonemes(false)
+      return () => { cancelled = true }
+    }
+
+    setIsResolvingPhonemes(true)
+    fetchEnglishDictionaryPhonemes(word).then(found => {
+      if (cancelled) return
+      setPhonemes(found || unsupportedWord(word))
+      setIsResolvingPhonemes(false)
+    })
+
+    return () => { cancelled = true }
+  }, [prebuiltPhonemes, strictLookup, word])
 
   const startBlobRecording = useCallback(() => {
     navigator.mediaDevices.getUserMedia({ audio: true })
@@ -615,10 +890,18 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   }, [phonemes, recordingDuration])
 
   const startRecording = useCallback(() => {
+    if (isResolvingPhonemes) {
+      setErrorMsg('Đang tìm IPA cho từ này...')
+      return
+    }
+    if (!canScoreWord) {
+      setErrorMsg(lookupNote || 'Từ này chưa có IPA đủ tin cậy để chấm điểm.')
+      return
+    }
     setRecordingUrl(null)
     setErrorMsg(null)
     startBlobRecording()
-  }, [startBlobRecording])
+  }, [canScoreWord, isResolvingPhonemes, lookupNote, startBlobRecording])
 
   const stopRecording = () => {
     clearTimeout(timeoutRef.current)
@@ -673,22 +956,60 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
   }
 
   const sel = selectedIdx !== null && result ? result.phonemes[selectedIdx] : null
+  const hasNav = onPrev !== null || onNext !== null
+  const detailMeanings = detail?.meanings || []
+  const visibleDetailMeanings = isMeaningExpanded ? detailMeanings : detailMeanings.slice(0, 1)
+  const navButtons = hasNav ? (
+    <div className="flex flex-col gap-2.5 pt-1">
+      <button onClick={onPrev} disabled={!onPrev} className={`w-full rounded-2xl ${compact ? 'py-2' : 'py-3'} flex items-center justify-center gap-1 text-sm font-bold whitespace-nowrap transition-all border ${onPrev ? 'bg-amber-500/20 border-amber-400/40 text-amber-200 active:scale-95' : 'bg-white/5 border-white/5 text-white/20 cursor-not-allowed'}`}>‹ Từ trước</button>
+      <button onClick={onNext} disabled={!onNext} className={`w-full rounded-2xl ${compact ? 'py-2' : 'py-3'} flex items-center justify-center gap-1 text-sm font-bold whitespace-nowrap transition-all border ${onNext ? 'bg-cyan-500/20 border-cyan-400/40 text-cyan-200 active:scale-95' : 'bg-white/5 border-white/5 text-white/20 cursor-not-allowed'}`}>Từ sau ›</button>
+    </div>
+  ) : null
 
   return (
     <div className="flex flex-col h-full">
       <audio ref={audioRef} className="hidden" />
 
       {/* Tiêu đề từ + IPA breakdown */}
-      <div className="text-center py-6 px-4">
-        <div className="text-5xl mb-2">{emoji}</div>
-        <button onClick={() => speakNeural(word, lang)} className="text-3xl font-bold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto">
+      <div className={`text-center px-4 ${compact ? 'py-1' : 'py-6'}`}>
+        <div className={`${compact ? 'hidden' : 'text-5xl mb-2'}`}>{emoji}</div>
+        <button onClick={() => speakNeural(word, lang)} className={`${compact ? 'text-4xl' : 'text-5xl'} font-extrabold text-white hover:text-blue-300 transition-colors flex items-center gap-2 mx-auto leading-tight`}>
           {word}
-          <Volume2 size={22} className="text-white/40" />
+          <Volume2 size={compact ? 24 : 28} className="text-white/55" />
         </button>
-        <div className="text-white/50 text-sm mt-1">{meaning}</div>
-        <div className="text-white/35 font-mono text-sm mt-0.5">/{phonemes.map(p => (p.isStressed ? 'ˈ' : '') + p.ipa).join('')}/</div>
+        <div className={`${compact ? 'text-sm' : 'text-xs'} text-white/55 mt-0.5`}>{meaning}</div>
+        <div className={`${compact ? 'text-2xl' : 'text-3xl'} text-cyan-100/90 font-mono font-semibold mt-1 break-all leading-tight`}>/{phonemes.map(formatIpa).join('')}/</div>
 
-        <div className="flex flex-wrap justify-center gap-2 mt-4">
+        {compact && detailMeanings.length > 0 && (
+          <div className="mt-1 text-left bg-white/5 border border-white/10 rounded-xl px-2 py-1.5">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-white/45 text-xs font-semibold uppercase tracking-wide">Nghĩa & ví dụ</span>
+              {detailMeanings.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setIsMeaningExpanded(prev => !prev)}
+                  className="w-7 h-7 rounded-lg bg-white/10 border border-white/10 text-white/70 flex items-center justify-center active:scale-95 transition-transform"
+                  aria-label={isMeaningExpanded ? 'Thu gọn nghĩa và ví dụ' : 'Mở rộng nghĩa và ví dụ'}
+                >
+                  {isMeaningExpanded ? <Minus size={15} /> : <Plus size={15} />}
+                </button>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {visibleDetailMeanings.map((item, idx) => (
+                <div key={`${word}-${item.pos}-${idx}`} className="min-w-0">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className="shrink-0 text-[11px] uppercase tracking-wide text-emerald-300 border border-emerald-400/25 rounded px-1.5 py-0.5">{item.pos}</span>
+                    <span className="text-white/85 text-sm leading-snug">{item.meaningVi}</span>
+                  </div>
+                  <div className="text-white/50 text-sm leading-snug">{item.exampleEn} · {item.exampleVi}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className={`flex flex-nowrap justify-start gap-1 overflow-x-auto pb-1 ${compact ? 'mt-1' : 'mt-4'}`}>
           {phonemes.map((p, idx) => {
             const r = result?.phonemes[idx]
             const hasScore = r && result?.spokenWord !== null
@@ -697,10 +1018,10 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
             return (
               <button key={idx}
                 onClick={() => { speakPhoneme(p.text, p.ipa, lang); if (hasScore) setSelectedIdx(selectedIdx === idx ? null : idx) }}
-                className={`border rounded-xl px-3 py-2 flex flex-col items-center gap-0.5 transition-all cursor-pointer active:scale-95 ${bg} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
+                className={`shrink-0 border rounded-xl ${compact ? 'px-2.5 py-1' : 'px-3 py-2'} flex flex-col items-center gap-0.5 whitespace-nowrap transition-all cursor-pointer active:scale-95 ${bg} ${selectedIdx === idx ? 'ring-2 ring-white/40' : ''}`}
               >
                 <span className="text-white font-semibold text-sm">{p.text}</span>
-                <span className="text-white/40 font-mono text-xs">/{p.isStressed ? 'ˈ' : ''}{p.ipa}/</span>
+                <span className="text-white/45 font-mono text-sm">/{formatIpa(p)}/</span>
                 {hasScore && <span className={`text-xs font-bold ${tc}`}>{r.score}%</span>}
                 {p.isHard && !hasScore && <span className="text-yellow-400 text-xs">★</span>}
               </button>
@@ -731,50 +1052,27 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
 
       {/* Kết quả tổng */}
       {result && (() => {
-        const wrongStress = result.stress && !result.stress.correct
         return (
-          <div className={`mx-4 mb-4 rounded-2xl p-4 border ${wrongStress ? 'bg-red-500/10 border-red-500/40' : 'bg-white/5 border-white/10'}`}>
-            <div className="flex items-center justify-between mb-2">
+          <div className="mx-4 mb-1 rounded-xl p-2 border bg-white/5 border-white/10">
+            <div className="flex items-center justify-between mb-1">
               <span className="text-white/60 text-sm">Kết quả:</span>
               <span className="text-white/40 text-sm">Từ: "{result.spokenWord || '—'}"</span>
             </div>
             <div className="flex items-center gap-3">
               <div className="flex-1 h-3 bg-white/10 rounded-full overflow-hidden">
                 <div className={`h-full rounded-full transition-all duration-700 ${result.overall >= 85 ? 'bg-emerald-400' : result.overall >= 65 ? 'bg-yellow-400' : 'bg-red-400'}`}
-                  style={{ width: `${Math.max(result.overall, wrongStress ? 2 : 0)}%` }} />
+                  style={{ width: `${result.overall}%` }} />
               </div>
               <span className={`font-bold text-lg ${scoreColor(result.overall)}`}>{result.overall}%</span>
             </div>
-            {wrongStress
-              ? <p className="text-red-400 font-semibold text-sm mt-1">Nhấn âm sai ❌ — 0 điểm</p>
-              : <p className={`text-sm mt-1 ${scoreColor(result.overall)}`}>{scoreLabel(result.overall)}</p>
-            }
-            <p className="text-white/40 text-xs mt-1">Nhấn vào từng âm để xem chi tiết</p>
+            <p className={`text-sm mt-1 ${scoreColor(result.overall)}`}>{scoreLabel(result.overall)}</p>
+            {!compact && <p className="text-white/40 text-xs mt-1">Nhấn vào từng âm để xem chi tiết</p>}
           </div>
         )
       })()}
 
-      {result?.stress && !result.stress.correct && (
-        <div className="mx-4 mb-4 rounded-2xl border bg-red-500/10 border-red-500/40 p-3 flex items-center gap-3">
-          <span className="text-2xl">❌</span>
-          <div>
-            <div className="text-red-400 text-xs font-bold uppercase tracking-wide mb-0.5">Nhấn âm sai</div>
-            <div className="text-red-300 text-sm">{result.stress.note}</div>
-          </div>
-        </div>
-      )}
-      {result?.stress?.correct && (
-        <div className="mx-4 mb-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/30 p-3 flex items-center gap-3">
-          <span className="text-xl">✓</span>
-          <div>
-            <div className="text-white/70 text-xs font-semibold uppercase tracking-wide mb-0.5">Trọng âm</div>
-            <div className="text-emerald-400 text-sm">{result.stress.note}</div>
-          </div>
-        </div>
-      )}
-
       {/* Nút điều khiển */}
-      <div className="px-4 pb-4 mt-auto flex flex-col gap-3">
+      <div className={`px-4 pb-4 mt-auto flex flex-col ${compact ? 'gap-2' : 'gap-3'}`}>
 
         {errorMsg && (
           <div className="bg-red-500/15 border border-red-500/40 rounded-2xl px-4 py-3 flex items-start gap-3">
@@ -783,33 +1081,25 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
           </div>
         )}
 
+        {!compact && lookupNote && phase === 'ready' && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3">
+            <p className="text-amber-200 text-sm leading-relaxed">{lookupNote}</p>
+          </div>
+        )}
+
+        {isResolvingPhonemes && phase === 'ready' && (
+          <div className="w-full rounded-2xl py-3 bg-white/5 border border-white/10 text-white/50 flex items-center justify-center gap-2">
+            <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+            Đang tìm IPA cho từ này...
+          </div>
+        )}
+
         {/* Nghe mẫu — trên cùng khi ready/recording */}
         {(phase === 'ready' || phase === 'recording') && (
-          <button onClick={() => speakNeural(word, lang)} className="w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+          <button onClick={() => speakNeural(word, lang)} className={`w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform`}>
             <Volume2 size={18} />
             Nghe mẫu
           </button>
-        )}
-
-        {/* Duration controls — chỉ khi ready */}
-        {phase === 'ready' && (
-          <>
-            <div className="flex items-center justify-center gap-4">
-              <button onClick={() => changeDuration(Math.max(1, recordingDuration - 1))}
-                className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
-                −
-              </button>
-              <span className="text-white/50 text-sm w-20 text-center">Thời gian: {recordingDuration}s</span>
-              <button onClick={() => changeDuration(Math.min(10, recordingDuration + 1))}
-                className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90 transition-transform hover:bg-white/15">
-                +
-              </button>
-            </div>
-            <label className="flex items-center justify-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" checked={saveAsDefault} onChange={e => toggleSaveDefault(e.target.checked)} className="w-4 h-4 rounded accent-blue-500" />
-              <span className="text-white/40 text-xs">Lưu làm mặc định</span>
-            </label>
-          </>
         )}
 
         {/* Scoring phase */}
@@ -817,7 +1107,7 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
           <>
             {recordingUrl && (
               <button onClick={playbackRecording}
-                className={`w-full rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+                className={`w-full rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
                 {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
                 {isPlayingBack ? 'Dừng' : 'Nghe lại bản ghi'}
               </button>
@@ -826,63 +1116,86 @@ function PronunciationPractice({ word, meaning, emoji, lang = 'en-US', prebuiltP
               <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
               Đang phân tích phát âm...
             </div>
-            <button onClick={reset} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            <button onClick={reset} className={`w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform`}>
               <RotateCcw size={18} />
               Thử lại
             </button>
-            {(onPrev || onNext) && (
-              <div className="flex flex-col gap-2">
-                <button onClick={onNext} disabled={!onNext} className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>Từ tiếp theo ›</button>
-                <button onClick={onPrev} disabled={!onPrev} className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>‹ Từ trước</button>
-              </div>
-            )}
           </>
         )}
 
         {/* Result phase */}
         {phase === 'result' && (
           <>
-            <div className="flex gap-2">
-              {recordingUrl && (
-                <button onClick={playbackRecording}
-                  className={`flex-1 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
-                  {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
-                  {isPlayingBack ? 'Dừng' : 'Nghe lại'}
-                </button>
-              )}
-              <button onClick={() => speakNeural(word, lang)} className="flex-1 bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
-                <Volume2 size={16} />
-                Nghe mẫu
+            {recordingUrl && (
+              <button onClick={playbackRecording}
+                className={`w-full rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform border ${isPlayingBack ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-green-600/20 border-green-500/30 text-green-300'}`}>
+                {isPlayingBack ? <Square size={16} /> : <Play size={16} />}
+                {isPlayingBack ? 'Dừng' : 'Nghe lại'}
               </button>
-            </div>
-            <button onClick={resetAndRecord} className="w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl py-3 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            )}
+            <button onClick={() => speakNeural(word, lang)} className={`w-full bg-blue-600/20 border border-blue-500/30 text-blue-300 rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform`}>
+              <Volume2 size={16} />
+              Nghe mẫu
+            </button>
+            <button onClick={resetAndRecord} className={`w-full bg-white/5 border border-white/10 text-white/50 rounded-2xl ${compact ? 'py-1.5 text-sm' : 'py-3'} flex items-center justify-center gap-2 active:scale-95 transition-transform`}>
               <RotateCcw size={18} />
               Thử lại
             </button>
-            {(onPrev || onNext) && (
-              <div className="flex flex-col gap-2">
-                <button onClick={onNext} disabled={!onNext} className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onNext ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>Từ tiếp theo ›</button>
-                <button onClick={onPrev} disabled={!onPrev} className={`w-full rounded-2xl py-3 flex items-center justify-center gap-1 text-sm font-medium transition-all border ${onPrev ? 'bg-white/5 border-white/10 text-white/60 active:scale-95' : 'bg-white/3 border-white/5 text-white/20 cursor-not-allowed'}`}>‹ Từ trước</button>
-              </div>
-            )}
           </>
         )}
 
         {/* Nút ghi âm lớn — luôn ở cuối cùng */}
         {phase === 'ready' && (
-          <button onClick={startRecording}
-            className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-2xl py-6 flex items-center justify-center gap-3 text-xl font-bold active:scale-95 transition-transform shadow-lg shadow-red-900/30">
+          <button onClick={startRecording} disabled={!canScoreWord || isResolvingPhonemes}
+            className={`w-full rounded-2xl ${compact ? 'py-2 text-base' : 'py-6 text-xl'} flex items-center justify-center gap-3 font-bold transition-transform shadow-lg ${
+              canScoreWord && !isResolvingPhonemes
+                ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white active:scale-95 shadow-red-900/30'
+                : 'bg-white/5 border border-white/10 text-white/25 cursor-not-allowed shadow-none'
+            }`}>
             <Mic size={28} />
-            Ghi âm ({recordingDuration}s)
+            {isResolvingPhonemes ? 'Đang tìm IPA...' : canScoreWord ? `Ghi âm (${recordingDuration}s)` : 'Chưa thể chấm từ này'}
           </button>
         )}
         {phase === 'recording' && (
           <button onClick={stopRecording}
-            className="w-full bg-red-600/20 border-2 border-red-500/50 rounded-2xl py-6 flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform">
+            className={`w-full bg-red-600/20 border-2 border-red-500/50 rounded-2xl ${compact ? 'py-2 text-base' : 'py-6'} flex items-center justify-center gap-3 text-red-400 active:scale-95 transition-transform`}>
             <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse" />
             <span className="font-bold text-xl">Đang ghi âm...</span>
             <span className="font-bold tabular-nums text-red-300 text-2xl">{countdown}s</span>
           </button>
+        )}
+
+        {learnedControl && (
+          <button
+            type="button"
+            onClick={() => learnedControl.onToggle(result?.overall ?? null)}
+            className={`w-full rounded-2xl ${compact ? 'py-2 text-base' : 'py-5 text-lg'} flex items-center justify-center gap-3 font-bold border transition-transform active:scale-95 ${learnedControl.checked ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200' : 'bg-white/5 border-white/10 text-white/75'}`}
+          >
+            <span className={`w-6 h-6 rounded-md border flex items-center justify-center ${learnedControl.checked ? 'bg-emerald-400 border-emerald-300 text-gray-950' : 'border-white/30 text-transparent'}`}>✓</span>
+            Đã học
+          </button>
+        )}
+
+        {navButtons}
+
+        {/* Ô tìm kiếm — luôn hiển thị khi có callback */}
+        {onSearchWord && !compact && (
+          <form onSubmit={e => { e.preventDefault(); const w = searchVal.trim(); if (w) { onSearchWord(w); setSearchVal('') } }}
+            className="flex gap-2 pt-1 border-t border-white/10 mt-1">
+            <div className="flex-1 relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <input
+                value={searchVal}
+                onChange={e => setSearchVal(e.target.value)}
+                placeholder="Luyện từ khác..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-white text-sm placeholder-white/25 focus:outline-none focus:border-white/25"
+              />
+            </div>
+            <button type="submit"
+              className="bg-blue-600/80 hover:bg-blue-500 text-white rounded-xl px-4 text-sm font-semibold transition-colors active:scale-95">
+              Tra
+            </button>
+          </form>
         )}
 
       </div>
@@ -900,7 +1213,7 @@ const LANG_CONFIG = {
 }
 
 function AzureUsageBadge() {
-  const { used, total, pct } = getAzureUsageSummary()
+  const { used, total, pct, usedLabel } = getAzureUsageSummary()
   const color = pct >= 90 ? 'text-red-400' : pct >= 70 ? 'text-yellow-400' : 'text-emerald-400'
   const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-emerald-500'
   return (
@@ -908,7 +1221,11 @@ function AzureUsageBadge() {
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1.5">
           <span className="text-white/40 text-xs">Azure</span>
-          <span className={`text-xs font-semibold ${color}`}>{used.toFixed(2)}h / {total}h</span>
+          <span className={`text-xs font-semibold ${color}`}>{usedLabel} đã dùng</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-white/30 text-[11px]">Tháng này</span>
+          <span className="text-white/50 text-[11px]">{used.toFixed(2)}h / {total}h free</span>
         </div>
         <div className="w-24 h-1.5 bg-white/10 rounded-full overflow-hidden">
           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
@@ -1073,7 +1390,7 @@ function SoundDetailScreen({ sound, lang, onBack, onPracticeWord }) {
   )
 }
 
-function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBack, onNext, onPrev }) {
+function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, strictLookup = false, onBack, onNext, onPrev, onSearchWord }) {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
       <div className="px-4 pt-6 pb-2 flex items-center gap-3">
@@ -1082,23 +1399,141 @@ function PracticeWordScreen({ word, meaning, emoji, lang, prebuiltPhonemes, onBa
         </button>
         <span className="text-white/50 text-sm">Luyện phát âm</span>
       </div>
-      <PronunciationPractice key={word} word={word} meaning={meaning} emoji={emoji} lang={lang} prebuiltPhonemes={prebuiltPhonemes} onBack={onBack} onNext={onNext} onPrev={onPrev} />
+      <PronunciationPractice key={word} word={word} meaning={meaning} emoji={emoji} lang={lang} prebuiltPhonemes={prebuiltPhonemes} strictLookup={strictLookup} onBack={onBack} onNext={onNext} onPrev={onPrev} onSearchWord={onSearchWord} />
     </div>
   )
 }
 
+const COMMON_3000_LEARNED_KEY = 'common3000LearnedWords'
+const COMMON_3000_SCORES_KEY = 'common3000LearnedScores'
+
+function loadLearnedCommonWords() {
+  try {
+    const raw = localStorage.getItem(COMMON_3000_LEARNED_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(parsed) ? parsed : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function saveLearnedCommonWords(words) {
+  localStorage.setItem(COMMON_3000_LEARNED_KEY, JSON.stringify([...words].sort()))
+}
+
+function loadCommonWordScores() {
+  try {
+    const raw = localStorage.getItem(COMMON_3000_SCORES_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveCommonWordScores(scores) {
+  localStorage.setItem(COMMON_3000_SCORES_KEY, JSON.stringify(scores))
+}
+
 function DictionaryScreen({ onBack }) {
   const [query, setQuery] = useState('')
+  const [commonQuery, setCommonQuery] = useState('')
+  const [commonLevel, setCommonLevel] = useState('all')
+  const [commonLearnedFilter, setCommonLearnedFilter] = useState('all')
+  const [learnedCommonWords, setLearnedCommonWords] = useState(() => loadLearnedCommonWords())
+  const [commonWordScores, setCommonWordScores] = useState(() => loadCommonWordScores())
+  const [recordingDurationSetting, setRecordingDurationSetting] = useState(() => {
+    const saved = localStorage.getItem('recordingDuration')
+    return saved ? parseInt(saved, 10) : 3
+  })
   const [activeWord, setActiveWord] = useState(null)
   const inputRef = useRef(null)
+  const openWord = (word, meta = {}) => {
+    const w = word.trim().toLowerCase()
+    if (w) setActiveWord({
+      word: w,
+      meaning: meta.meaning || '',
+      emoji: meta.emoji || '📖',
+      strictLookup: meta.strictLookup ?? true,
+      source: meta.source || 'search',
+      entry: meta.entry || null,
+      detail: meta.detail || null,
+      commonList: meta.commonList || null,
+      commonIndex: meta.commonIndex ?? null,
+    })
+  }
 
   const handleSearch = (e) => {
     e.preventDefault()
-    const w = query.trim().toLowerCase().split(/\s+/)[0]
-    if (w) setActiveWord(w)
+    openWord(query)
   }
 
+  const toggleCommonLearned = (word, score = null) => {
+    const key = word.toLowerCase()
+    setLearnedCommonWords(prev => {
+      const next = new Set(prev)
+      const willLearn = !next.has(key)
+      if (willLearn) next.add(key)
+      else next.delete(key)
+      saveLearnedCommonWords(next)
+      setCommonWordScores(prevScores => {
+        const nextScores = { ...prevScores }
+        if (willLearn && Number.isFinite(score)) {
+          nextScores[key] = Math.round(score)
+        } else if (!willLearn) {
+          delete nextScores[key]
+        }
+        saveCommonWordScores(nextScores)
+        return nextScores
+      })
+      return next
+    })
+  }
+
+  const changeRecordingDurationSetting = (value) => {
+    const next = Math.max(1, Math.min(10, value))
+    setRecordingDurationSetting(next)
+    localStorage.setItem('recordingDuration', next)
+  }
+
+  const normalizedCommonQuery = commonQuery.trim().toLowerCase()
+  const filteredCommonWords = COMMON_3000_WORDS.filter(entry => {
+    const levelMatch = commonLevel === 'all' || entry.level === commonLevel
+    const queryMatch = !normalizedCommonQuery || entry.word.toLowerCase().includes(normalizedCommonQuery)
+    const isLearned = learnedCommonWords.has(entry.word.toLowerCase())
+    const learnedMatch = commonLearnedFilter === 'all'
+      || (commonLearnedFilter === 'learned' && isLearned)
+      || (commonLearnedFilter === 'unlearned' && !isLearned)
+    return levelMatch && queryMatch && learnedMatch
+  })
+  const learnedCount = learnedCommonWords.size
+  const unlearnedCount = Math.max(0, COMMON_3000_WORDS.length - learnedCount)
+
   if (activeWord) {
+    const isCommonWord = activeWord.source === 'common'
+    const isLearned = learnedCommonWords.has(activeWord.word)
+    const commonList = activeWord.commonList || []
+    const commonIndex = activeWord.commonIndex ?? -1
+    const commonEntry = activeWord.entry || commonList[commonIndex] || null
+    const commonDetail = activeWord.detail || COMMON_3000_DETAIL_MAP[activeWord.word] || null
+    const openCommonAt = (nextIndex) => {
+      const nextEntry = commonList[nextIndex]
+      if (!nextEntry) return
+      const nextDetail = COMMON_3000_DETAIL_MAP[nextEntry.word.toLowerCase()] || null
+      openWord(nextEntry.word, {
+        meaning: `${nextEntry.level} · ${nextEntry.pos}`,
+        emoji: '📚',
+        strictLookup: true,
+        source: 'common',
+        entry: nextEntry,
+        detail: nextDetail,
+        commonList,
+        commonIndex: nextIndex,
+      })
+    }
+    const onPrevCommon = isCommonWord && commonIndex > 0 ? () => openCommonAt(commonIndex - 1) : null
+    const onNextCommon = isCommonWord && commonIndex >= 0 && commonIndex < commonList.length - 1 ? () => openCommonAt(commonIndex + 1) : null
+
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-900 via-[#0f0f1a] to-[#0f0f1a] pb-24">
         <div className="px-4 pt-6 pb-2 flex items-center gap-3">
@@ -1107,7 +1542,23 @@ function DictionaryScreen({ onBack }) {
           </button>
           <span className="text-white/50 text-sm">Từ điển phát âm</span>
         </div>
-        <PronunciationPractice key={activeWord} word={activeWord} meaning="" emoji="📖" onBack={() => setActiveWord(null)} />
+        <PronunciationPractice
+          key={activeWord.word}
+          word={activeWord.word}
+          meaning={isCommonWord ? `${commonIndex + 1}/${commonList.length}${commonEntry ? ` · ${commonEntry.level} · ${commonEntry.pos}` : ''}` : activeWord.meaning}
+          emoji={activeWord.emoji}
+          strictLookup={activeWord.strictLookup}
+          compact={isCommonWord}
+          detail={commonDetail}
+          learnedControl={isCommonWord ? {
+            checked: isLearned,
+            onToggle: (latestScore) => toggleCommonLearned(activeWord.word, latestScore),
+          } : null}
+          onBack={() => setActiveWord(null)}
+          onPrev={onPrevCommon}
+          onNext={onNextCommon}
+          onSearchWord={openWord}
+        />
       </div>
     )
   }
@@ -1136,17 +1587,121 @@ function DictionaryScreen({ onBack }) {
         </div>
       </form>
 
-      {/* Suggestions */}
       <div className="px-4">
-        <div className="text-white/40 text-xs uppercase tracking-wider mb-3">Thử ngay</div>
-        <div className="flex flex-wrap gap-2">
-          {['think','this','three','voice','bird','water','measure','good','beautiful','through','very','world'].map(w => (
-            <button key={w} onClick={() => setActiveWord(w)}
-              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white/70 text-sm hover:bg-white/10 transition-colors active:scale-95">
-              {w}
+        <div className="mb-4 bg-white/5 border border-white/10 rounded-2xl px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-white/70 text-sm font-semibold">Setting</div>
+              <div className="text-white/35 text-xs">Thời gian ghi âm</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => changeRecordingDurationSetting(recordingDurationSetting - 1)}
+                className="w-8 h-8 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90">
+                −
+              </button>
+              <span className="text-white/70 text-sm w-10 text-center">{recordingDurationSetting}s</span>
+              <button onClick={() => changeRecordingDurationSetting(recordingDurationSetting + 1)}
+                className="w-8 h-8 rounded-xl bg-white/10 border border-white/15 text-white/70 text-lg font-bold flex items-center justify-center active:scale-90">
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-end justify-between gap-3 mb-3">
+          <div>
+            <h2 className="text-white font-semibold">3000 từ thông dụng</h2>
+            <p className="text-white/40 text-xs">{COMMON_3000_WORDS.length} từ A1-B2 để luyện phát âm</p>
+          </div>
+          <div className="text-white/35 text-xs shrink-0">{filteredCommonWords.length} từ</div>
+        </div>
+
+        <div className="relative mb-3">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+          <input
+            value={commonQuery}
+            onChange={e => setCommonQuery(e.target.value)}
+            placeholder="Tìm trong 3000 từ..."
+            className="w-full bg-white/5 border border-white/10 rounded-2xl pl-9 pr-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-white/30 text-sm"
+          />
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto pb-3">
+          <button
+            onClick={() => setCommonLevel('all')}
+            className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold border transition-colors ${commonLevel === 'all' ? 'bg-white text-gray-950 border-white' : 'bg-white/5 text-white/60 border-white/10'}`}
+          >
+            Tất cả
+          </button>
+          {COMMON_3000_LEVELS.map(level => (
+            <button
+              key={level}
+              onClick={() => setCommonLevel(level)}
+              className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold border transition-colors ${commonLevel === level ? 'bg-white text-gray-950 border-white' : 'bg-white/5 text-white/60 border-white/10'}`}
+            >
+              {level} · {COMMON_3000_COUNTS[level]}
             </button>
           ))}
         </div>
+
+        <div className="flex gap-2 overflow-x-auto pb-3">
+          {[
+            ['all', `Tất cả · ${COMMON_3000_WORDS.length}`],
+            ['unlearned', `Chưa học · ${unlearnedCount}`],
+            ['learned', `Đã học · ${learnedCount}`],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setCommonLearnedFilter(key)}
+              className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold border transition-colors ${commonLearnedFilter === key ? 'bg-emerald-400 text-gray-950 border-emerald-300' : 'bg-white/5 text-white/60 border-white/10'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {filteredCommonWords.map((entry, index) => {
+            const isLearned = learnedCommonWords.has(entry.word.toLowerCase())
+            const savedScore = commonWordScores[entry.word.toLowerCase()]
+            const detail = COMMON_3000_DETAIL_MAP[entry.word.toLowerCase()]
+            const firstMeaning = detail?.meanings?.[0]
+            return (
+            <button
+              key={`${entry.level}-${entry.word}`}
+              onClick={() => openWord(entry.word, {
+                meaning: `${entry.level} · ${entry.pos}`,
+                emoji: '📚',
+                strictLookup: true,
+                source: 'common',
+                entry,
+                detail,
+                commonList: filteredCommonWords,
+                commonIndex: index,
+              })}
+              className={`min-w-0 border rounded-xl px-3 py-2.5 text-left hover:bg-white/10 active:scale-[0.98] transition ${isLearned ? 'bg-emerald-500/10 border-emerald-500/25' : 'bg-white/5 border-white/10'}`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-white text-sm font-medium">{entry.word}</span>
+                {isLearned && <span className="shrink-0 text-emerald-300 text-xs">✓</span>}
+                {Number.isFinite(savedScore) && (
+                  <span className={`shrink-0 text-[10px] leading-none rounded px-1.5 py-1 border ${savedScore >= 85 ? 'text-emerald-200 border-emerald-400/30 bg-emerald-500/10' : savedScore >= 65 ? 'text-yellow-200 border-yellow-400/30 bg-yellow-500/10' : 'text-red-200 border-red-400/30 bg-red-500/10'}`}>
+                    {savedScore}%
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 text-[10px] leading-none text-white/50 border border-white/10 rounded px-1.5 py-1">{entry.level}</span>
+              </div>
+              <div className="text-white/35 text-xs mt-1">
+                {firstMeaning?.meaningVi || entry.pos}
+              </div>
+            </button>
+            )
+          })}
+        </div>
+
+        {filteredCommonWords.length === 0 && (
+          <div className="text-white/40 text-sm py-10 text-center">Không tìm thấy từ phù hợp.</div>
+        )}
       </div>
     </div>
   )
@@ -1155,15 +1710,17 @@ function DictionaryScreen({ onBack }) {
 // ─── BOTTOM NAV ───────────────────────────────────────────────────────────
 
 function BottomNav({ screen, onNavigate }) {
+  const items = [
+    { label: 'Trang Chủ',     icon: Home,     target: 'library',    active: screen === 'library' },
+    { label: 'Sound Library', icon: Library,  target: 'library',    active: ['soundDetail', 'practiceWord'].includes(screen) },
+    { label: 'Từ Điển',       icon: BookOpen, target: 'dictionary', active: screen === 'dictionary' },
+  ]
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur border-t border-white/10 flex z-40">
-      {[
-        { id: 'library', icon: Library, label: 'Sound Library' },
-        { id: 'dictionary', icon: BookOpen, label: 'Từ Điển' },
-      ].map(({ id, icon: Icon, label }) => (
-        <button key={id} onClick={() => onNavigate(id)}
-          className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${screen === id ? 'text-white' : 'text-white/30 hover:text-white/60'}`}>
-          <Icon size={22} strokeWidth={screen === id ? 2.5 : 1.5} />
+      {items.map(({ label, icon: Icon, target, active }) => (
+        <button key={label} onClick={() => onNavigate(target)}
+          className={`flex-1 flex flex-col items-center gap-1 py-3 transition-colors ${active ? 'text-white' : 'text-white/30 hover:text-white/60'}`}>
+          <Icon size={22} strokeWidth={active ? 2.5 : 1.5} />
           <span className="text-xs">{label}</span>
         </button>
       ))}
@@ -1178,13 +1735,19 @@ export default function App() {
   const [selectedSound, setSelectedSound] = useState(null)
   const [practiceWord, setPracticeWord] = useState(null)
   const [practiceWordIdx, setPracticeWordIdx] = useState(0)
+  const [dictionaryScreenKey, setDictionaryScreenKey] = useState(0)
   const [lang, setLang] = useState('en')   // 'en' | 'es' | 'it'
 
   const azureCode = LANG_CONFIG[lang].azureCode
 
   const handleSelectSound = (sound) => { setSelectedSound(sound); setScreen('soundDetail') }
   const handlePracticeWord = (w, idx = 0) => { setPracticeWord(w); setPracticeWordIdx(idx); setScreen('practiceWord') }
-  const handleNavigate = (s) => { setScreen(s); setSelectedSound(null); setPracticeWord(null) }
+  const handleNavigate = (s) => {
+    setScreen(s)
+    setSelectedSound(null)
+    setPracticeWord(null)
+    if (s === 'dictionary') setDictionaryScreenKey(prev => prev + 1)
+  }
   const handleChangeLang = (l) => { setLang(l); setSelectedSound(null); setPracticeWord(null) }
 
   const soundWords = selectedSound?.words || []
@@ -1223,7 +1786,7 @@ export default function App() {
         />
       )}
       {screen === 'dictionary' && (
-        <DictionaryScreen onBack={() => handleNavigate('library')} />
+        <DictionaryScreen key={dictionaryScreenKey} onBack={() => handleNavigate('library')} />
       )}
       <BottomNav screen={screen} onNavigate={handleNavigate} />
     </div>

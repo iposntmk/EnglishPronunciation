@@ -200,6 +200,7 @@ const AZURE_TO_IPA_EN = {
 const AZURE_TO_IPA_ES = {
   a: 'a', e: 'e', i: 'i', o: 'o', u: 'u',
   p: 'p', b: 'b', B: 'β', t: 't', d: 'd', D: 'ð',
+  T: 'θ',
   k: 'k', g: 'g', G: 'ɣ', f: 'f', s: 's', S: 'ʃ',
   x: 'x', tS: 'tʃ', jj: 'j', y: 'j', j: 'j',
   m: 'm', n: 'n', N: 'ɲ', l: 'l', L: 'ʎ',
@@ -209,9 +210,9 @@ const AZURE_TO_IPA_ES = {
 
 // Azure it-IT phoneme IDs → IPA
 const AZURE_TO_IPA_IT = {
-  a: 'a', e: 'e', i: 'i', o: 'o', u: 'u',
+  a: 'a', e: 'e', E: 'ɛ', i: 'i', o: 'o', O: 'ɔ', u: 'u',
   p: 'p', b: 'b', t: 't', d: 'd', k: 'k', g: 'g',
-  f: 'f', v: 'v', s: 's', z: 'z',
+  f: 'f', v: 'v', s: 's', z: 'z', Z: 'ʒ',
   tS: 'tʃ', dZ: 'dʒ', ts: 'ts', dz: 'dz',
   S: 'ʃ', r: 'r', l: 'l', L: 'ʎ',
   m: 'm', n: 'n', J: 'ɲ',
@@ -238,6 +239,206 @@ const AZURE_PHONEME_MAPS = {
   'fr-FR': AZURE_TO_IPA_FR,
 }
 
+const EN_ATOMIC_IPA = [
+  'tʃ', 'dʒ', 'iː', 'ɜː', 'uː', 'ɔː', 'ɑː', 'oʊ', 'eɪ', 'aɪ', 'aʊ', 'ɔɪ',
+  'ɾ', 'θ', 'ð', 'ʃ', 'ʒ', 'ŋ',
+  'ə', 'ɪ', 'ɛ', 'æ', 'ʌ', 'ʊ', 'i', 'ɑ', 'ɒ', 'ɔ', 'e', 'a', 'ɜ', 'ɐ', 'ɾ',
+  'p', 'b', 't', 'd', 'k', 'g', 'm', 'n', 'f', 'v', 's', 'z', 'h', 'r', 'j', 'w', 'l',
+]
+
+const ES_ATOMIC_IPA = [
+  'tʃ', 'β', 'ð', 'ɣ', 'ɲ', 'ʎ', 'ɾ', 'r', 'θ', 'ʃ', 'x',
+  'a', 'e', 'i', 'o', 'u', 'p', 'b', 't', 'd', 'k', 'g', 'f', 's', 'j', 'w', 'm', 'n', 'l',
+]
+
+const IT_ATOMIC_IPA = [
+  'tʃ', 'dʒ', 'ts', 'dz', 'ɲ', 'ʎ', 'ʃ', 'ʒ',
+  'ɛ', 'ɔ',
+  'a', 'e', 'i', 'o', 'u',
+  'p', 'b', 't', 'd', 'k', 'g', 'f', 'v', 's', 'z', 'r', 'l', 'm', 'n', 'j', 'w',
+]
+
+const EN_IPA_EXPANSIONS = {
+  'ɑːr': ['ɑː', 'r'],
+  'ɔːr': ['ɔː', 'r'],
+  'ɛər': ['ɛ', 'r'],
+  'ɪər': ['ɪ', 'r'],
+  'ər': ['ɜː'],
+  'ɑ': ['ɑː'],
+  'ɒ': ['ɑː'],
+  'ɔ': ['ɔː'],
+  'e': ['ɛ'],
+  'a': ['æ'],
+  'ɜ': ['ɜː'],
+  'ɐ': ['ʌ'],
+  'ŋk': ['ŋ', 'k'],
+  'ŋg': ['ŋ', 'g'],
+}
+
+const ES_IPA_EXPANSIONS = {
+  'br': ['β', 'r'],
+  'tr': ['t', 'r'],
+  'dr': ['d', 'r'],
+  'gr': ['g', 'r'],
+  'kr': ['k', 'r'],
+  'pr': ['p', 'r'],
+  'fr': ['f', 'r'],
+  'pl': ['p', 'l'],
+  'bl': ['β', 'l'],
+  'kl': ['k', 'l'],
+  'gl': ['g', 'l'],
+  'gw': ['g', 'w'],
+  'ai': ['a', 'i'],
+  'ei': ['e', 'i'],
+  'oi': ['o', 'i'],
+  'ui': ['u', 'i'],
+  'ja': ['j', 'a'],
+  'je': ['j', 'e'],
+  'jo': ['j', 'o'],
+  'ju': ['j', 'u'],
+  'wa': ['w', 'a'],
+  'we': ['w', 'e'],
+  'wi': ['w', 'i'],
+  'wo': ['w', 'o'],
+  'ks': ['k', 's'],
+}
+
+const IT_IPA_EXPANSIONS = {
+  br: ['b', 'r'],
+  tr: ['t', 'r'],
+  dr: ['d', 'r'],
+  gr: ['g', 'r'],
+  kr: ['k', 'r'],
+  pr: ['p', 'r'],
+  fr: ['f', 'r'],
+  skr: ['s', 'k', 'r'],
+  sk: ['s', 'k'],
+  kw: ['k', 'w'],
+  kj: ['k', 'j'],
+  gj: ['g', 'j'],
+  fj: ['f', 'j'],
+  lj: ['l', 'j'],
+  ja: ['j', 'a'],
+  je: ['j', 'e'],
+  ji: ['j', 'i'],
+  jo: ['j', 'o'],
+  ju: ['j', 'u'],
+  wa: ['w', 'a'],
+  we: ['w', 'e'],
+  wi: ['w', 'i'],
+  wo: ['w', 'o'],
+  ai: ['a', 'i'],
+  ei: ['e', 'i'],
+  oi: ['o', 'i'],
+  tʃ: ['t', 'ʃ'],
+  dʒ: ['d', 'ʒ'],
+  ts: ['t', 's'],
+  dz: ['d', 'z'],
+  'ʎʎ': ['ʎ', 'ʎ'],
+  'ɲɲ': ['ɲ', 'ɲ'],
+  'ʃʃ': ['ʃ', 'ʃ'],
+}
+
+function expandEnglishTargetIpa(ipa) {
+  if (EN_IPA_EXPANSIONS[ipa]) return EN_IPA_EXPANSIONS[ipa]
+
+  const out = []
+  let i = 0
+  while (i < ipa.length) {
+    const match = EN_ATOMIC_IPA.find(atom => ipa.startsWith(atom, i))
+    if (!match) return [ipa]
+    out.push(match)
+    i += match.length
+  }
+  return out.length > 0 ? out : [ipa]
+}
+
+function expandSpanishTargetIpa(ipa) {
+  if (ES_IPA_EXPANSIONS[ipa]) return ES_IPA_EXPANSIONS[ipa]
+
+  const out = []
+  let i = 0
+  while (i < ipa.length) {
+    const match = ES_ATOMIC_IPA.find(atom => ipa.startsWith(atom, i))
+    if (!match) return [ipa]
+    out.push(match)
+    i += match.length
+  }
+  return out.length > 0 ? out : [ipa]
+}
+
+function expandItalianTargetIpa(ipa) {
+  if (IT_IPA_EXPANSIONS[ipa]) return IT_IPA_EXPANSIONS[ipa]
+
+  const out = []
+  let i = 0
+  while (i < ipa.length) {
+    const match = IT_ATOMIC_IPA.find(atom => ipa.startsWith(atom, i))
+    if (!match) return [ipa]
+    out.push(match)
+    i += match.length
+  }
+  return out.length > 0 ? out : [ipa]
+}
+
+function scoreExpandedTargetPhonemes(targetPhonemes, azurePhonemes, overallScore, expandTargetIpa) {
+  let cursor = 0
+
+  return targetPhonemes.map(target => {
+    const parts = expandTargetIpa(target.ipa)
+    const matched = []
+    let searchFrom = cursor
+
+    const exactHit = azurePhonemes.findIndex((ap, i) => i >= cursor && ap.ipa === target.ipa)
+    if (exactHit !== -1) {
+      matched.push(azurePhonemes[exactHit])
+      searchFrom = exactHit + 1
+    } else for (const part of parts) {
+      let hit = -1
+      for (let i = searchFrom; i < azurePhonemes.length; i++) {
+        if (azurePhonemes[i].ipa === part) {
+          hit = i
+          break
+        }
+      }
+      if (hit === -1) continue
+      matched.push(azurePhonemes[hit])
+      searchFrom = hit + 1
+    }
+
+    if (matched.length > 0) cursor = matched[matched.length - 1].index + 1
+
+    const score = matched.length > 0
+      ? Math.round(matched.reduce((sum, item) => sum + item.score, 0) / matched.length)
+      : overallScore
+
+    const offset = matched.length > 0 ? matched[0].offset : null
+    const duration = matched.length > 0
+      ? matched.reduce((sum, item) => sum + item.duration, 0)
+      : null
+
+    return {
+      ...target,
+      score,
+      audioOffset: offset,
+      audioDuration: duration,
+      note: score < 60 ? `Âm /${target.ipa}/ cần luyện thêm` : null,
+    }
+  })
+}
+
+function scoreEnglishTargetPhonemes(targetPhonemes, azurePhonemes, overallScore) {
+  return scoreExpandedTargetPhonemes(targetPhonemes, azurePhonemes, overallScore, expandEnglishTargetIpa)
+}
+
+function scoreSpanishTargetPhonemes(targetPhonemes, azurePhonemes, overallScore) {
+  return scoreExpandedTargetPhonemes(targetPhonemes, azurePhonemes, overallScore, expandSpanishTargetIpa)
+}
+
+function scoreItalianTargetPhonemes(targetPhonemes, azurePhonemes, overallScore) {
+  return scoreExpandedTargetPhonemes(targetPhonemes, azurePhonemes, overallScore, expandItalianTargetIpa)
+}
+
 export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, region, language = 'en-US') {
   const wavBlob = await audioBlobToPcmWav(audioBlob)
   const targetWord = phonemes.map(p => p.text).join('')
@@ -252,6 +453,7 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
     Granularity: 'Phoneme',
     Dimension: 'Comprehensive',
     EnableMiscue: true,
+    EnableProsodyAssessment: false,
   }
   // Strip any CR/LF that btoa may insert; also trim key to avoid whitespace from secrets
   const cleanKey = subscriptionKey.trim().replace(/[\r\n]/g, '')
@@ -289,87 +491,48 @@ export async function scoreWordAzure(audioBlob, phonemes, subscriptionKey, regio
   }
 
   const nbest = data.NBest?.[0]
+  const azureWord = nbest?.Words?.[0] || null
   const spokenWord = (nbest?.Lexical || '').trim().toLowerCase().replace(/[.,!?]/g, '').split(/\s+/)[0] || ''
   // Scores are directly on NBest[0], not nested under PronunciationAssessment
   const overallScore = Math.round(nbest?.PronScore ?? nbest?.AccuracyScore ?? 0)
 
-  // Build IPA → score + timing maps from Azure per-phoneme data
+  // Build ordered Azure phoneme list so repeated sounds are matched by position,
+  // not by a single ipa -> best-score map.
   const phonemeMap = AZURE_PHONEME_MAPS[language] || AZURE_TO_IPA_EN
-  const azurePhonemes = nbest?.Words?.[0]?.Phonemes || []
-  const ipaScoreMap = {}
-  const ipaTimingMap = {} // ipa → { offset, duration } in seconds
-  for (const ap of azurePhonemes) {
+  const azurePhonemes = (nbest?.Words?.[0]?.Phonemes || []).map((ap, index) => {
     const rawId = ap.Phoneme || ''
     const ipa = phonemeMap[rawId] || phonemeMap[rawId.toLowerCase()]
-    if (!ipa) continue
-    const s = ap.AccuracyScore ?? ap.PronunciationAssessment?.AccuracyScore ?? 0
-    if (!(ipa in ipaScoreMap) || s > ipaScoreMap[ipa]) {
-      ipaScoreMap[ipa] = s
-      // Azure Offset/Duration are in 100-nanosecond units
-      ipaTimingMap[ipa] = {
-        offset: (ap.Offset ?? 0) / 10_000_000,
-        duration: (ap.Duration ?? 0) / 10_000_000,
-      }
-    }
-  }
-
-  const scored = phonemes.map(p => {
-    const score = p.ipa in ipaScoreMap ? Math.round(ipaScoreMap[p.ipa]) : overallScore
-    const timing = ipaTimingMap[p.ipa] ?? null
+    if (!ipa) return null
     return {
-      ...p,
-      score,
-      audioOffset: timing?.offset ?? null,
-      audioDuration: timing?.duration ?? null,
-      note: score < 60 ? `Âm /${p.ipa}/ cần luyện thêm` : null,
+      index,
+      ipa,
+      score: Math.round(ap.AccuracyScore ?? ap.PronunciationAssessment?.AccuracyScore ?? 0),
+      offset: (ap.Offset ?? 0) / 10_000_000,
+      duration: (ap.Duration ?? 0) / 10_000_000,
     }
-  })
+  }).filter(Boolean)
+
+  const scored = language === 'en-US'
+    ? scoreEnglishTargetPhonemes(phonemes, azurePhonemes, overallScore)
+    : language === 'es-ES'
+      ? scoreSpanishTargetPhonemes(phonemes, azurePhonemes, overallScore)
+      : language === 'it-IT'
+        ? scoreItalianTargetPhonemes(phonemes, azurePhonemes, overallScore)
+    : phonemes.map(p => {
+        const match = azurePhonemes.find(ap => ap.ipa === p.ipa) || null
+        const score = match ? match.score : overallScore
+        return {
+          ...p,
+          score,
+          audioOffset: match?.offset ?? null,
+          audioDuration: match?.duration ?? null,
+          note: score < 60 ? `Âm /${p.ipa}/ cần luyện thêm` : null,
+        }
+      })
 
   const overall = scored.length > 0
     ? Math.round(scored.reduce((s, p) => s + p.score, 0) / scored.length)
     : overallScore
 
-  // Syllable stress detection — English only, words with an isStressed phoneme
-  let stress = null
-  if (language === 'en-US') {
-    const stressedPh = scored.find(p => p.isStressed)
-    const unstressedPhs = scored.filter(p => !p.isStressed)
-
-    if (stressedPh && unstressedPhs.length > 0) {
-      const stressScore = stressedPh.score
-      const avgUnstressed = unstressedPhs.length > 0
-        ? Math.round(unstressedPhs.reduce((s, p) => s + p.score, 0) / unstressedPhs.length)
-        : 0
-
-      // Duration-based: if any unstressed phoneme has longer duration than stressed → wrong stress
-      const phs_with_timing = scored.filter(p => p.audioDuration !== null && p.audioDuration > 0.02)
-      let wrongByDuration = false
-      if (phs_with_timing.length >= 2) {
-        const longest = phs_with_timing.reduce((a, b) => b.audioDuration > a.audioDuration ? b : a)
-        if (!longest.isStressed) wrongByDuration = true
-      }
-
-      // Score-based: stressed phoneme scores much worse than unstressed ones
-      const wrongByScore = stressScore < 50 && avgUnstressed >= stressScore + 25
-
-      const wrongStress = wrongByDuration || wrongByScore
-
-      stress = {
-        correct: !wrongStress,
-        expectedIpa: stressedPh.ipa,
-        note: wrongStress
-          ? `Nhấn âm sai → 0 điểm ⚠️  (cần nhấn mạnh /${stressedPh.ipa}/)`
-          : 'Trọng âm đúng ✓',
-      }
-
-      if (wrongStress) {
-        const penalized = scored.map(p =>
-          p.isStressed ? { ...p, score: 0, note: 'Nhấn âm sai ⚠️' } : p
-        )
-        return { phonemes: penalized, overall: 0, spokenWord, stress }
-      }
-    }
-  }
-
-  return { phonemes: scored, overall, spokenWord, stress }
+  return { phonemes: scored, overall, spokenWord, stress: null }
 }
